@@ -5,27 +5,72 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "liveshell"
 version = "0.1.0"
-description = "Persistent command runtime sessions for Python."
+description = "Durable local shell sessions, commands, events, and daemon control for Python."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "pythonnet>=3.0",
+license = "MIT"
+authors = [
+    {name = "LiveShell maintainers"},
 ]
+keywords = [
+    "automation",
+    "commands",
+    "daemon",
+    "local-execution",
+    "shell",
+    "sqlite",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Shells",
+    "Typing :: Typed",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/openai/liveshell"
+Documentation = "https://github.com/openai/liveshell#readme"
+Issues = "https://github.com/openai/liveshell/issues"
+Source = "https://github.com/openai/liveshell"
 
 [project.scripts]
 liveshell = "liveshell.cli:main"
 
 [project.optional-dependencies]
+powershell = [
+    "pythonnet>=3.0",
+]
 dev = [
+    "build>=1.0",
     "coverage>=7.0",
     "pytest>=8.0",
+    "ruff>=0.6",
+    "twine>=5.0",
 ]
+
+[tool.ruff]
+line-length = 95
+target-version = "py310"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+liveshell = ["py.typed"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
