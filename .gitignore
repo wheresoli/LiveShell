@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Packaging/build
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Test/coverage caches
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Type/tool caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# IDE/editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local scratch/output
+tmp/
+*.log
