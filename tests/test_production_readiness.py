@@ -440,8 +440,9 @@ class CliProductionTests(unittest.TestCase):
 
 class PackagingProductionTests(unittest.TestCase):
     def test_base_package_imports_without_hard_pythonnet_dependency(self) -> None:
+        if tomllib is None:
+            self.skipTest("tomllib is only available on Python 3.11+ (or install tomli).")
         pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-
         self.assertEqual(pyproject["project"].get("dependencies"), [])
         self.assertIn(
             "pythonnet>=3.0",
