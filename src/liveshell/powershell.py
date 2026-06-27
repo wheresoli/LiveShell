@@ -69,7 +69,9 @@ class PowerShell(PreloadableSession):
             dll_directory = None
 
             if installation.uses_coreclr and Environment.is_windows():
-                dll_directory = os.add_dll_directory(str(home))
+                home_str = str(home)
+                if not any(str(d) == home_str for d in cls._DLL_DIRECTORIES):
+                    dll_directory = os.add_dll_directory(home_str)
 
             if str(home) not in sys.path:
                 sys.path.insert(0, str(home))
@@ -130,9 +132,9 @@ class PowerShell(PreloadableSession):
             candidates.append(Path(path))
 
         if os.environ.get("PSHOME"):
-            if not cls.is_valid_home(Path(os.environ["PSHOME"])):
-                raise RuntimeError(f"Invalid PowerShell home path: {os.environ['PSHOME']}")
-            candidates.append(Path(os.environ["PSHOME"]))
+            pshome = Path(os.environ["PSHOME"])
+            if cls.is_valid_home(pshome):
+                candidates.append(pshome)
 
         executable = Environment.executable("pwsh.exe", "pwsh")
         if executable:
@@ -210,7 +212,7 @@ class PowerShell(PreloadableSession):
         except OSError:
             return None
 
-        return assemblies[0] if assemblies else None
+        return sorted(assemblies, key=lambda p: p.parent.name, reverse=True)[0] if assemblies else None
 
     @classmethod
     def versioned_homes(cls, root: Path) -> list[Path]:

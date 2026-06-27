@@ -25,8 +25,7 @@ class Session(ABC):
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             if not self.is_running():
-                # raise RuntimeError(f"Session is closed, cannot call {func.__name__}({', '.join(map(str, args))}, {', '.join(f'{k}={v}' for k, v in kwargs.items())})")
-                return None
+                raise RuntimeError(f"Session is closed, cannot call {func.__name__}")
             return func(self, *args, **kwargs)
         return wrapper
 

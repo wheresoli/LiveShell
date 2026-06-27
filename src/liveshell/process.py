@@ -63,8 +63,8 @@ class ProcessSession(ProcessBackedSession):
     @classmethod
     def find(cls, path: str | os.PathLike[str] | None = None, **kwargs) -> Path | None:
         if path is not None:
-            executable = Path(path)
-            if executable.exists():
+            executable = Path(path).resolve()
+            if executable.is_file():
                 return executable
             raise RuntimeError(f"Invalid executable path: {path}")
         return Environment.executable(*cls.executable_names)
