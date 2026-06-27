@@ -12,8 +12,12 @@ dependencies = [
     "pythonnet>=3.0",
 ]
 
+[project.scripts]
+liveshell = "liveshell.cli:main"
+
 [project.optional-dependencies]
 dev = [
+    "coverage>=7.0",
     "pytest>=8.0",
 ]
 
