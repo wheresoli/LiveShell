@@ -81,6 +81,30 @@ class ProcessSessionBase:
     def clean_stderr(self, output: str) -> str:
         return output.rstrip()
 
+    def _new_stderr_path(self) -> str:
+        handle = tempfile.NamedTemporaryFile(
+            prefix="liveshell-stderr-",
+            suffix=".txt",
+            delete=False,
+        )
+        try:
+            return handle.name
+        finally:
+            handle.close()
+
+    def _cleanup_stderr_path(self, path: str) -> None:
+        try:
+            Path(path).unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    @staticmethod
+    def process_group_kwargs() -> dict[str, object]:
+        if Environment.is_windows():
+            creation_flag = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            return {"creationflags": creation_flag} if creation_flag else {}
+        return {"start_new_session": True}
+
 
 class ProcessSession(ProcessSessionBase, ProcessBackedSession):
     def __init__(
@@ -110,6 +134,7 @@ class ProcessSession(ProcessSessionBase, ProcessBackedSession):
             encoding=self.encoding,
             errors="replace",
             bufsize=1,
+            **self.process_group_kwargs(),
         )
 
     def is_running(self) -> bool:
@@ -187,23 +212,6 @@ class ProcessSession(ProcessSessionBase, ProcessBackedSession):
         if check:
             result.check_returncode()
         return result
-
-    def _new_stderr_path(self) -> str:
-        handle = tempfile.NamedTemporaryFile(
-            prefix="liveshell-stderr-",
-            suffix=".txt",
-            delete=False,
-        )
-        try:
-            return handle.name
-        finally:
-            handle.close()
-
-    def _cleanup_stderr_path(self, path: str) -> None:
-        try:
-            Path(path).unlink(missing_ok=True)
-        except OSError:
-            pass
 
     def text(self, command: str, *, check: bool = True) -> str:
         return self.run(command, check=check).output
@@ -293,6 +301,7 @@ class AsyncProcessSession(ProcessSessionBase, AsyncProcessBackedSession):
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                **self.process_group_kwargs(),
             )
         return self
 
@@ -307,42 +316,63 @@ class AsyncProcessSession(ProcessSessionBase, AsyncProcessBackedSession):
         await self.start()
 
         token = uuid.uuid4().hex
-        wrapped = self.wrap_command(command, token).encode(self.encoding, errors="replace")
+        stderr_path = self._new_stderr_path()
+        wrapped = self.wrap_command(
+            command,
+            token,
+            stderr_path=stderr_path,
+        ).encode(self.encoding, errors="replace")
 
         async with self._lock:
-            process = self.process
-            if (
-                process is None
-                or process.stdin is None
-                or process.stdout is None
-                or process.returncode is not None
-            ):
-                raise RuntimeError(f"{self.__class__.__name__} session is not connected.")
+            try:
+                process = self.process
+                if (
+                    process is None
+                    or process.stdin is None
+                    or process.stdout is None
+                    or process.returncode is not None
+                ):
+                    raise RuntimeError(f"{self.__class__.__name__} session is not connected.")
 
-            process.stdin.write(wrapped)
-            await process.stdin.drain()
+                process.stdin.write(wrapped)
+                await process.stdin.drain()
 
-            output_parts: list[str] = []
-            exit_code: int | None = None
-            while True:
-                line_bytes = await process.stdout.readline()
-                if line_bytes == b"":
-                    if process.returncode is not None:
-                        raise RuntimeError(f"{self.__class__.__name__} session exited unexpectedly.")
-                    raise RuntimeError(f"{self.__class__.__name__} stdout pipe closed unexpectedly.")
+                output_parts: list[str] = []
+                stderr_parts: list[str] = []
+                exit_code: int | None = None
+                reading_stderr = False
+                while True:
+                    line_bytes = await process.stdout.readline()
+                    if line_bytes == b"":
+                        if process.returncode is not None:
+                            raise RuntimeError(f"{self.__class__.__name__} session exited unexpectedly.")
+                        raise RuntimeError(f"{self.__class__.__name__} stdout pipe closed unexpectedly.")
 
-                line = line_bytes.decode(self.encoding, errors="replace")
-                parsed = self.parse_sentinel(line, token)
-                if parsed is not None:
-                    exit_code = parsed
-                    break
+                    line = line_bytes.decode(self.encoding, errors="replace")
+                    if self.is_stderr_begin(line, token):
+                        reading_stderr = True
+                        continue
+                    if self.is_stderr_end(line, token):
+                        reading_stderr = False
+                        continue
 
-                output_parts.append(line)
+                    parsed = self.parse_sentinel(line, token)
+                    if parsed is not None:
+                        exit_code = parsed
+                        break
+
+                    if reading_stderr:
+                        stderr_parts.append(line)
+                    else:
+                        output_parts.append(line)
+            finally:
+                self._cleanup_stderr_path(stderr_path)
 
         result = ProcessResult(
             command=command,
             output=self.clean_output("".join(output_parts)),
             exit_code=exit_code if exit_code is not None else 1,
+            stderr=self.clean_stderr("".join(stderr_parts)),
         )
         if check:
             result.check_returncode()

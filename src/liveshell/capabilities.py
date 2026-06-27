@@ -4,7 +4,7 @@ import importlib.util
 
 from .bash import Bash
 from .cmd import Cmd
-from .models import Capability
+from .models import PROTOCOL_VERSION, Capability
 from .powershell import PowerShell
 
 
@@ -16,10 +16,18 @@ def discover_capabilities() -> list[Capability]:
     pythonnet_available = importlib.util.find_spec("pythonnet") is not None
 
     capabilities = [
+        Capability("protocol.version", True, {"version": PROTOCOL_VERSION}),
         Capability("session.persistent_env", True),
         Capability("command.blocking", True),
+        Capability("command.async", True),
         Capability("command.poll", True),
+        Capability("command.timeout", True),
+        Capability("command.exit_code.native", True),
+        Capability("daemon.protocol", True, {"transport": "stdio", "network": False}),
         Capability("command.events.replay", True),
+        Capability("command.events.chunking", True),
+        Capability("command.stdout.streaming", True, {"scope": "process_backed"}),
+        Capability("command.stderr.separate", True),
         Capability(
             "command.events.streaming.best_effort",
             True,

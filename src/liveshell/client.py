@@ -6,6 +6,7 @@ import itertools
 import json
 import os
 from pathlib import Path
+import queue
 import subprocess
 import sys
 import threading
@@ -32,9 +33,17 @@ class LiveShellProtocolError(LiveShellClientError):
 class LiveShellResponseError(LiveShellClientError):
     """Raised when the daemon returns an application-level error response."""
 
-    def __init__(self, error_type: str, message: str, *, response: dict[str, Any]):
+    def __init__(
+        self,
+        error_type: str,
+        message: str,
+        *,
+        response: dict[str, Any],
+        error_code: str | None = None,
+    ):
         super().__init__(f"{error_type}: {message}" if message else error_type)
         self.error_type = error_type
+        self.error_code = error_code
         self.message = message
         self.response = response
 
@@ -49,14 +58,17 @@ class LiveShellClient:
         *,
         process: subprocess.Popen[str] | None = None,
         stderr_stream: TextIO | None = None,
+        request_timeout_seconds: float | None = 30.0,
     ):
         self._input_stream = input_stream
         self._output_stream = output_stream
         self._process = process
         self._stderr_stream = stderr_stream
+        self.request_timeout_seconds = request_timeout_seconds
         self._request_ids = itertools.count(1)
         self._lock = threading.RLock()
         self._closed = False
+        self._closing = False
         self._stderr_tail: deque[str] = deque(maxlen=50)
         if stderr_stream is not None:
             self._stderr_thread = threading.Thread(
@@ -76,6 +88,7 @@ class LiveShellClient:
         *,
         python_executable: str | Path | None = None,
         env: dict[str, str] | None = None,
+        request_timeout_seconds: float | None = 30.0,
     ) -> LiveShellClient:
         executable = str(python_executable or sys.executable)
         command = [
@@ -88,17 +101,22 @@ class LiveShellClient:
             str(state_dir),
         ]
         child_env = cls._child_env(env)
-        process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            env=child_env,
-        )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                env=child_env,
+            )
+        except OSError as exc:
+            raise LiveShellProtocolError(
+                f"Failed to start LiveShell daemon with {executable!r}: {exc}"
+            ) from exc
         if process.stdin is None or process.stdout is None:
             process.kill()
             raise LiveShellProtocolError("Failed to open daemon stdio pipes.")
@@ -107,6 +125,7 @@ class LiveShellClient:
             process.stdout,
             process=process,
             stderr_stream=process.stderr,
+            request_timeout_seconds=request_timeout_seconds,
         )
 
     @staticmethod
@@ -137,6 +156,7 @@ class LiveShellClient:
         params: dict[str, Any] | None = None,
         *,
         request_id: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         if not isinstance(method, str) or not method:
             raise ValueError("method must be a non-empty string.")
@@ -157,7 +177,9 @@ class LiveShellClient:
             except OSError as exc:
                 raise self._transport_error("Failed to write daemon request.") from exc
 
-            line = self._output_stream.readline()
+            line = self._read_response_line(
+                self.request_timeout_seconds if timeout_seconds is None else timeout_seconds
+            )
             if line == "":
                 raise self._transport_error("Daemon closed stdout without a response.")
 
@@ -181,8 +203,14 @@ class LiveShellClient:
         params: dict[str, Any] | None = None,
         *,
         request_id: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> Any:
-        response = self.request_envelope(method, params, request_id=request_id)
+        response = self.request_envelope(
+            method,
+            params,
+            request_id=request_id,
+            timeout_seconds=timeout_seconds,
+        )
         if response.get("ok") is True:
             return response.get("result")
         error = response.get("error")
@@ -192,11 +220,21 @@ class LiveShellClient:
             str(error.get("type", "Error")),
             str(error.get("message", "")),
             response=response,
+            error_code=str(error.get("code")) if error.get("code") is not None else None,
         )
 
     def discover_capabilities(self) -> list[Capability]:
         result = self.request("capability.discover")
         return [_capability_from_dict(item) for item in result["capabilities"]]
+
+    def daemon_status(self) -> dict[str, Any]:
+        return dict(self.request("daemon.status"))
+
+    def daemon_shutdown(self, *, reason: str | None = None) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if reason is not None:
+            params["reason"] = reason
+        return dict(self.request("daemon.shutdown", params))
 
     def create_session(
         self,
@@ -286,16 +324,24 @@ class LiveShellClient:
         params: dict[str, Any] | None = None,
         *,
         request_id: str | None = None,
+        timeout_seconds: float | None = None,
     ) -> Any:
         return await asyncio.to_thread(
             self.request,
             method,
             params,
             request_id=request_id,
+            timeout_seconds=timeout_seconds,
         )
 
     async def discover_capabilities_async(self) -> list[Capability]:
         return await asyncio.to_thread(self.discover_capabilities)
+
+    async def daemon_status_async(self) -> dict[str, Any]:
+        return await asyncio.to_thread(self.daemon_status)
+
+    async def daemon_shutdown_async(self, *, reason: str | None = None) -> dict[str, Any]:
+        return await asyncio.to_thread(self.daemon_shutdown, reason=reason)
 
     async def create_session_async(
         self,
@@ -311,10 +357,78 @@ class LiveShellClient:
             metadata=metadata,
         )
 
-    async def close_async(self, *, timeout: float = 2.0) -> None:
-        await asyncio.to_thread(self.close, timeout=timeout)
+    async def list_sessions_async(self) -> list[SessionSnapshot]:
+        return await asyncio.to_thread(self.list_sessions)
 
-    def close(self, *, timeout: float = 2.0) -> None:
+    async def session_snapshot_async(self, session_id: str) -> SessionSnapshot:
+        return await asyncio.to_thread(self.session_snapshot, session_id)
+
+    async def close_session_async(self, session_id: str) -> SessionSnapshot:
+        return await asyncio.to_thread(self.close_session, session_id)
+
+    async def start_command_async(
+        self,
+        session_id: str,
+        command: str,
+        *,
+        cwd: str | None = None,
+        timeout_seconds: float | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> CommandHandle:
+        return await asyncio.to_thread(
+            self.start_command,
+            session_id,
+            command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            metadata=metadata,
+        )
+
+    async def poll_command_async(self, command_id: str) -> CommandSnapshot:
+        return await asyncio.to_thread(self.poll_command, command_id)
+
+    async def command_events_async(
+        self,
+        command_id: str,
+        *,
+        since_seq: int = 0,
+    ) -> list[CommandEvent]:
+        return await asyncio.to_thread(
+            self.command_events,
+            command_id,
+            since_seq=since_seq,
+        )
+
+    async def command_result_async(self, command_id: str) -> CommandResult | None:
+        return await asyncio.to_thread(self.command_result, command_id)
+
+    async def cancel_command_async(
+        self,
+        command_id: str,
+        *,
+        reason: str | None = None,
+    ) -> CommandSnapshot:
+        return await asyncio.to_thread(self.cancel_command, command_id, reason=reason)
+
+    async def close_async(self, *, timeout: float = 2.0, graceful: bool = True) -> None:
+        await asyncio.to_thread(self.close, timeout=timeout, graceful=graceful)
+
+    def close(self, *, timeout: float = 2.0, graceful: bool = True) -> None:
+        should_request_shutdown = False
+        with self._lock:
+            if self._closed:
+                return
+            if not self._closing:
+                self._closing = True
+                should_request_shutdown = (
+                    graceful
+                    and self._process is not None
+                    and self._process.poll() is None
+                )
+
+        if should_request_shutdown:
+            self._request_shutdown_before_close(timeout=timeout)
+
         with self._lock:
             if self._closed:
                 return
@@ -348,6 +462,81 @@ class LiveShellClient:
             raise LiveShellProtocolError("LiveShellClient is closed.")
         if self._process is not None and self._process.poll() is not None:
             raise self._transport_error("Daemon process is no longer running.")
+
+    def _read_response_line(self, timeout_seconds: float | None) -> str:
+        if timeout_seconds is None:
+            return self._output_stream.readline()
+        if timeout_seconds <= 0:
+            raise ValueError("timeout_seconds must be greater than zero.")
+        responses: queue.Queue[str | BaseException] = queue.Queue(maxsize=1)
+
+        def read_line() -> None:
+            try:
+                responses.put(self._output_stream.readline())
+            except BaseException as exc:
+                responses.put(exc)
+
+        thread = threading.Thread(
+            target=read_line,
+            daemon=True,
+            name="liveshell-client-response",
+        )
+        thread.start()
+        try:
+            item = responses.get(timeout=timeout_seconds)
+        except queue.Empty as exc:
+            self.close(timeout=0.2, graceful=False)
+            raise self._transport_error(
+                f"Timed out waiting for daemon response after {timeout_seconds:g}s."
+            ) from exc
+        if isinstance(item, BaseException):
+            raise self._transport_error("Failed to read daemon response.") from item
+        return item
+
+    def _request_shutdown_before_close(self, *, timeout: float) -> None:
+        shutdown_timeout = min(max(timeout, 0.1), 1.0)
+        request_id = f"req_close_{next(self._request_ids)}"
+        request = {
+            "id": request_id,
+            "method": "daemon.shutdown",
+            "params": {"reason": "client_close"},
+        }
+        encoded = json.dumps(request, separators=(",", ":"))
+        try:
+            with self._lock:
+                if self._closed or self._process is None or self._process.poll() is not None:
+                    return
+                self._input_stream.write(encoded + "\n")
+                self._input_stream.flush()
+                line = self._read_response_line_no_close(shutdown_timeout)
+            response = json.loads(line) if line else None
+            if not isinstance(response, dict) or response.get("id") != request_id:
+                return
+        except Exception:
+            return
+
+    def _read_response_line_no_close(self, timeout_seconds: float) -> str:
+        responses: queue.Queue[str | BaseException] = queue.Queue(maxsize=1)
+
+        def read_line() -> None:
+            try:
+                responses.put(self._output_stream.readline())
+            except BaseException as exc:
+                responses.put(exc)
+
+        thread = threading.Thread(
+            target=read_line,
+            daemon=True,
+            name="liveshell-client-close-response",
+        )
+        thread.start()
+        try:
+            item = responses.get(timeout=timeout_seconds)
+        except queue.Empty:
+            return ""
+        if isinstance(item, BaseException):
+            return ""
+        return item
 
     def _transport_error(self, message: str) -> LiveShellProtocolError:
         return_code = self._process.poll() if self._process is not None else None
@@ -396,6 +585,8 @@ def _session_from_dict(data: dict[str, Any]) -> SessionSnapshot:
         updated_at=data["updated_at"],
         closed_at=data.get("closed_at"),
         metadata=dict(data.get("metadata") or {}),
+        command_count=int(data.get("command_count", 0) or 0),
+        active_command_count=int(data.get("active_command_count", 0) or 0),
     )
 
 
@@ -415,6 +606,9 @@ def _command_from_dict(data: dict[str, Any]) -> CommandSnapshot:
         stderr_tail=data.get("stderr_tail", ""),
         output_hash=data.get("output_hash"),
         metadata=dict(data.get("metadata") or {}),
+        event_count=int(data.get("event_count", 0) or 0),
+        stdout_event_count=int(data.get("stdout_event_count", 0) or 0),
+        stderr_event_count=int(data.get("stderr_event_count", 0) or 0),
     )
 
 

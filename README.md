@@ -18,6 +18,24 @@ It is intentionally reusable infrastructure. LiveShell owns local sessions, comm
 
 ## Install
 
+Base install has no runtime dependencies:
+
+```powershell
+pip install liveshell
+```
+
+Hosted PowerShell support is optional because it requires `pythonnet`:
+
+```powershell
+pip install "liveshell[powershell]"
+```
+
+Development and release tooling lives in the `dev` extra:
+
+```powershell
+pip install -e ".[dev]"
+```
+
 Create or update a local development environment:
 
 ```powershell
@@ -71,7 +89,7 @@ with Cmd() as cmd:
     print(cmd.text("echo %LIVESHELL_TEST_VALUE%"))
 ```
 
-Process-backed sessions preserve shell state because a single child process remains alive for the session. `PowerShell` hosts the PowerShell engine through `pythonnet` where available rather than shelling out for each command.
+Process-backed sessions preserve shell state because a single child process remains alive for the session. `PowerShell` hosts the PowerShell engine through `pythonnet` when the optional `powershell` extra is installed rather than shelling out for each command.
 
 ## Asynchronous Sessions
 
@@ -106,6 +124,8 @@ with LiveShellClient.stdio(".liveshell-state") as client:
 
 The client starts a local stdio daemon subprocess, sends JSON-lines requests, validates responses, and returns typed `SessionHandle`, `CommandHandle`, snapshot, event, and result objects.
 
+Closing a client that owns a stdio daemon first sends `daemon.shutdown` so daemon-owned sessions are closed cleanly, then falls back to stdin close and process termination if the daemon does not exit. Use `client.close(graceful=False)` or `await client.close_async(graceful=False)` when the stream is already known to be unhealthy.
+
 Async code can use methods such as `discover_capabilities_async`, `create_session_async`, `SessionHandle.run_async`, `CommandHandle.poll_async`, and `CommandHandle.wait_async`. These wrappers use worker threads for protocol calls instead of pretending blocking I/O is natively nonblocking.
 
 ## Daemon Protocol
@@ -115,7 +135,8 @@ The daemon speaks JSON lines over stdio:
 - Each request is one JSON object followed by a newline.
 - Each response is one JSON object followed by a newline.
 - Successful responses use `{"ok": true, "result": ...}`.
-- Error responses use `{"ok": false, "error": {"type": "...", "message": "..."}}`.
+- Error responses use `{"ok": false, "error": {"type": "...", "code": "...", "message": "..."}}`.
+- `capability.discover` includes `protocol_version`; the current version is `1.0`.
 
 Example request:
 
@@ -126,7 +147,7 @@ Example request:
 Example response:
 
 ```json
-{"id":"req_1","ok":true,"result":{"capabilities":[]}}
+{"id":"req_1","ok":true,"result":{"protocol_version":"1.0","capabilities":[]}}
 ```
 
 Start a long-running daemon on stdio:
@@ -144,6 +165,8 @@ liveshell daemon stdio --once --state-dir .\.liveshell-state
 Supported protocol methods:
 
 - `capability.discover`
+- `daemon.status`
+- `daemon.shutdown`
 - `session.create`
 - `session.list`
 - `session.snapshot`
@@ -163,7 +186,10 @@ Typical protocol flow:
 {"id":"req_4","method":"command.events","params":{"command_id":"cmd_...","since_seq":0}}
 {"id":"req_5","method":"command.result","params":{"command_id":"cmd_..."}}
 {"id":"req_6","method":"session.close","params":{"session_id":"sess_..."}}
+{"id":"req_7","method":"daemon.shutdown","params":{"reason":"maintenance"}}
 ```
+
+See [docs/PROTOCOL.md](docs/PROTOCOL.md) for the compact protocol reference.
 
 ## State Model
 
@@ -210,17 +236,23 @@ Command events:
 
 The SQLite store keeps `session`, `command`, and `command_event` tables. It enables WAL mode and a busy timeout for better local reader/writer behavior.
 
+The store records schema version `1` in both `PRAGMA user_version` and a `store_metadata` table. Initialization is idempotent, migrations are internal and forward-only, and terminal command updates are written transactionally with their terminal event.
+
+Per-session command execution is FIFO. A newly-started command is `queued` until it reaches the front of the session queue; it becomes `running` only when the shell is actually executing it.
+
 If the daemon restarts, live process handles cannot be recovered. On startup, previously running sessions are marked `crashed`, and previously running commands are marked `failed` with recovery metadata. LiveShell records that honestly rather than pretending a previous process is still controllable.
 
 ## CLI
 
-All CLI commands print JSON.
+All CLI commands print JSON. Use `--json-pretty` before the subcommand for formatted output. Commands that need a state directory default to `.liveshell-state`.
 
 ```powershell
-liveshell capability discover
-liveshell run --kind cmd --command "echo hello" --timeout-seconds 5 --state-dir .\.liveshell-state
-liveshell daemon stdio --state-dir .\.liveshell-state
-liveshell daemon stdio --once --state-dir .\.liveshell-state
+liveshell --json-pretty capability discover
+liveshell run --kind cmd --command "echo hello" --timeout-seconds 5
+liveshell daemon stdio
+liveshell daemon stdio --once
+liveshell daemon status
+liveshell daemon shutdown --reason maintenance
 liveshell session list --state-dir .\.liveshell-state
 liveshell session snapshot --session-id sess_... --state-dir .\.liveshell-state
 liveshell command poll --command-id cmd_... --state-dir .\.liveshell-state
@@ -232,6 +264,8 @@ liveshell command cancel --command-id cmd_... --state-dir .\.liveshell-state
 `liveshell run` is a one-shot convenience command. It starts a local stdio daemon, creates a session, runs one command, waits for the durable result envelope, closes the session, and exits.
 
 Long-lived live sessions, command start, and active command cancellation require the daemon process that owns the in-memory shell session. Direct `session create`, `command start`, and active `command cancel` CLI paths fail clearly outside that daemon instead of faking success against only the SQLite store. Use `LiveShellClient` or send protocol requests to a running stdio daemon for live session control.
+
+`daemon.status` reads local state-dir daemon metadata. `daemon.shutdown` writes a local shutdown marker; stdio daemons also support the reliable `daemon.shutdown` protocol method over their stdin. A default network server, OS URL protocol handler, and hidden command execution from links are intentionally not provided.
 
 ## Capability Discovery
 
@@ -254,10 +288,15 @@ Discovery reports backend and protocol capabilities such as:
 
 - `session.persistent_env`
 - `command.blocking`
+- `command.async`
+- `command.timeout`
 - `command.poll`
+- `daemon.protocol`
 - `command.events.replay`
-- `command.events.streaming.best_effort`
+- `command.events.chunking`
+- `command.stdout.streaming`
 - `command.stderr.separate`
+- `command.events.streaming.best_effort`
 - `command.exit_code.native`
 - `command.cancel.best_effort`
 - `shell.cmd.available`
@@ -305,9 +344,15 @@ Hosted PowerShell error records and nonzero native `$LASTEXITCODE` values mark d
 
 Cancellation is best effort. Stopping a running command may require closing or terminating the backing session, and the command/session metadata records when that happens.
 
+On Unix-like systems, process-backed sessions are started in a new process group and termination first attempts process-group SIGTERM. On Windows, sessions are started with a new process group when available and cancellation first attempts CTRL+BREAK before terminate/kill fallbacks. These mechanisms are best effort and depend on child process behavior.
+
+Command output is durable and replayable, but it may contain secrets. LiveShell does not log command output by default; callers choosing stderr/file daemon logs should treat state directories and logs as sensitive.
+
 Persistent sessions own their working directory. Set `cwd` on `session.create`; per-command `cwd` is accepted only when it matches the session cwd. Create a separate session for a different working directory.
 
 OS URL protocol handlers, deep links, network servers, and hidden command execution from URLs are intentionally not implemented.
+
+Local named pipe or Unix socket daemon transport is not included in this slice. The stdio protocol is the supported live transport; status/shutdown CLI commands operate through state-dir metadata unless a caller sends the protocol method over an existing daemon stdio channel.
 
 ## Tests
 
@@ -324,3 +369,13 @@ pytest
 coverage run -m unittest discover -s tests
 coverage report
 ```
+
+## Release
+
+Build artifacts:
+
+```powershell
+python -m build
+```
+
+See [docs/RELEASE.md](docs/RELEASE.md) for release gates, tagging, and install commands.

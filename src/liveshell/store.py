@@ -9,6 +9,14 @@ from typing import Any, Iterator
 
 from .models import (
     COMMAND_QUEUED,
+    COMMAND_RUNNING,
+    COMMAND_STARTING,
+    COMMAND_STATUSES,
+    EVENT_TYPES,
+    SESSION_KINDS,
+    SESSION_RUNNING,
+    SESSION_STATUSES,
+    TERMINAL_COMMAND_STATUSES,
     CommandEvent,
     CommandResult,
     CommandSnapshot,
@@ -22,6 +30,8 @@ from .models import (
 DEFAULT_DB_NAME = "liveshell.sqlite3"
 TAIL_LIMIT = 8192
 BUSY_TIMEOUT_MS = 5000
+CURRENT_SCHEMA_VERSION = 1
+ACTIVE_COMMAND_STATUSES = (COMMAND_QUEUED, COMMAND_STARTING, COMMAND_RUNNING)
 
 
 def state_db_path(state_dir: str | Path) -> Path:
@@ -46,6 +56,7 @@ def _json_load(value: str | None) -> dict[str, Any]:
 class Store:
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
+        self.state_dir = self.db_path.parent
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
 
@@ -71,58 +82,138 @@ class Store:
 
     def initialize(self) -> None:
         with self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS session (
-                    id TEXT PRIMARY KEY,
-                    kind TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    cwd TEXT,
-                    pid INTEGER,
-                    started_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL,
-                    closed_at TEXT,
-                    metadata_json TEXT NOT NULL
-                );
+            current_version = self._schema_version(connection)
+            if current_version > CURRENT_SCHEMA_VERSION:
+                raise RuntimeError(
+                    f"LiveShell store schema {current_version} is newer than "
+                    f"this package supports ({CURRENT_SCHEMA_VERSION})."
+                )
+            if current_version < CURRENT_SCHEMA_VERSION:
+                self._migrate(connection, current_version, CURRENT_SCHEMA_VERSION)
 
-                CREATE TABLE IF NOT EXISTS command (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    command TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    cwd TEXT,
-                    timeout_seconds REAL,
-                    exit_code INTEGER,
-                    started_at TEXT,
-                    updated_at TEXT NOT NULL,
-                    ended_at TEXT,
-                    stdout_tail TEXT NOT NULL,
-                    stderr_tail TEXT NOT NULL,
-                    output_hash TEXT,
-                    metadata_json TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES session(id)
-                );
+    def schema_version(self) -> int:
+        with self._connect() as connection:
+            return self._schema_version(connection)
 
-                CREATE TABLE IF NOT EXISTS command_event (
-                    id TEXT PRIMARY KEY,
-                    command_id TEXT NOT NULL,
-                    seq INTEGER NOT NULL,
-                    event_type TEXT NOT NULL,
-                    text TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    metadata_json TEXT NOT NULL,
-                    UNIQUE(command_id, seq),
-                    FOREIGN KEY(command_id) REFERENCES command(id)
-                );
+    def store_metadata(self) -> dict[str, str]:
+        with self._connect() as connection:
+            rows = connection.execute("SELECT key, value FROM store_metadata").fetchall()
+        return {str(row["key"]): str(row["value"]) for row in rows}
 
-                CREATE INDEX IF NOT EXISTS idx_session_status
-                    ON session(status);
-                CREATE INDEX IF NOT EXISTS idx_command_session_status
-                    ON command(session_id, status);
-                CREATE INDEX IF NOT EXISTS idx_command_event_command_seq
-                    ON command_event(command_id, seq);
-                """
-            )
+    def _schema_version(self, connection: sqlite3.Connection) -> int:
+        row = connection.execute("PRAGMA user_version").fetchone()
+        version = int(row[0]) if row else 0
+        if version:
+            return version
+        metadata_exists = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type = 'table' AND name = 'store_metadata'
+            """
+        ).fetchone()
+        if metadata_exists is None:
+            return 0
+        row = connection.execute(
+            "SELECT value FROM store_metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        return int(row["value"]) if row else 0
+
+    def _migrate(
+        self,
+        connection: sqlite3.Connection,
+        from_version: int,
+        to_version: int,
+    ) -> None:
+        version = from_version
+        while version < to_version:
+            if version == 0:
+                self._create_schema_v1(connection)
+                version = 1
+                self._set_schema_version(connection, version)
+                continue
+            raise RuntimeError(f"No migration available from schema version {version}.")
+
+    def _set_schema_version(self, connection: sqlite3.Connection, version: int) -> None:
+        now = utc_now()
+        connection.execute(
+            """
+            INSERT INTO store_metadata (key, value, updated_at)
+            VALUES ('schema_version', ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (str(version), now),
+        )
+        connection.execute(f"PRAGMA user_version = {version}")
+
+    def _create_schema_v1(self, connection: sqlite3.Connection) -> None:
+        session_statuses = ", ".join(repr(status) for status in sorted(SESSION_STATUSES))
+        session_kinds = ", ".join(repr(kind) for kind in sorted(SESSION_KINDS))
+        command_statuses = ", ".join(repr(status) for status in sorted(COMMAND_STATUSES))
+        event_types = ", ".join(repr(event_type) for event_type in sorted(EVENT_TYPES))
+        connection.executescript(
+            f"""
+            CREATE TABLE IF NOT EXISTS store_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS session (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL CHECK(kind IN ({session_kinds})),
+                status TEXT NOT NULL CHECK(status IN ({session_statuses})),
+                cwd TEXT,
+                pid INTEGER CHECK(pid IS NULL OR pid > 0),
+                started_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                closed_at TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                CHECK(closed_at IS NULL OR status IN ('closed', 'crashed'))
+            );
+
+            CREATE TABLE IF NOT EXISTS command (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                command TEXT NOT NULL CHECK(length(command) > 0),
+                status TEXT NOT NULL CHECK(status IN ({command_statuses})),
+                cwd TEXT,
+                timeout_seconds REAL CHECK(timeout_seconds IS NULL OR timeout_seconds > 0),
+                exit_code INTEGER,
+                started_at TEXT,
+                updated_at TEXT NOT NULL,
+                ended_at TEXT,
+                stdout_tail TEXT NOT NULL DEFAULT '',
+                stderr_tail TEXT NOT NULL DEFAULT '',
+                output_hash TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                FOREIGN KEY(session_id) REFERENCES session(id),
+                CHECK(ended_at IS NULL OR status IN ('completed', 'failed', 'timed_out', 'canceled'))
+            );
+
+            CREATE TABLE IF NOT EXISTS command_event (
+                id TEXT PRIMARY KEY,
+                command_id TEXT NOT NULL,
+                seq INTEGER NOT NULL CHECK(seq > 0),
+                event_type TEXT NOT NULL CHECK(event_type IN ({event_types})),
+                text TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{{}}',
+                UNIQUE(command_id, seq),
+                FOREIGN KEY(command_id) REFERENCES command(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_session_status
+                ON session(status);
+            CREATE INDEX IF NOT EXISTS idx_command_session_status
+                ON command(session_id, status);
+            CREATE INDEX IF NOT EXISTS idx_command_status_updated
+                ON command(status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_command_event_command_seq
+                ON command_event(command_id, seq);
+            """
+        )
 
     def create_session(
         self,
@@ -204,18 +295,18 @@ class Store:
     def get_session(self, session_id: str) -> SessionSnapshot | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM session WHERE id = ?",
+                self._session_select_sql() + " WHERE session.id = ?",
                 (session_id,),
             ).fetchone()
         return self._session_from_row(row) if row else None
 
     def list_sessions(self, *, status: str | None = None) -> list[SessionSnapshot]:
-        query = "SELECT * FROM session"
+        query = self._session_select_sql()
         values: tuple[Any, ...] = ()
         if status is not None:
-            query += " WHERE status = ?"
+            query += " WHERE session.status = ?"
             values = (status,)
-        query += " ORDER BY started_at, id"
+        query += " ORDER BY session.started_at, session.id"
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
         return [self._session_from_row(row) for row in rows]
@@ -309,7 +400,7 @@ class Store:
     def get_command(self, command_id: str) -> CommandSnapshot | None:
         with self._connect() as connection:
             row = connection.execute(
-                "SELECT * FROM command WHERE id = ?",
+                self._command_select_sql() + " WHERE command.id = ?",
                 (command_id,),
             ).fetchone()
         return self._command_from_row(row) if row else None
@@ -320,18 +411,18 @@ class Store:
         session_id: str | None = None,
         status: str | None = None,
     ) -> list[CommandSnapshot]:
-        query = "SELECT * FROM command"
+        query = self._command_select_sql()
         conditions = []
         values: list[Any] = []
         if session_id is not None:
-            conditions.append("session_id = ?")
+            conditions.append("command.session_id = ?")
             values.append(session_id)
         if status is not None:
-            conditions.append("status = ?")
+            conditions.append("command.status = ?")
             values.append(status)
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
-        query += " ORDER BY updated_at, id"
+        query += " ORDER BY command.updated_at, command.id"
         with self._connect() as connection:
             rows = connection.execute(query, values).fetchall()
         return [self._command_from_row(row) for row in rows]
@@ -345,8 +436,36 @@ class Store:
         metadata: dict[str, Any] | None = None,
         created_at: str | None = None,
     ) -> CommandEvent:
-        event_id = _new_id("evt")
-        created_at = created_at or utc_now()
+        return self.append_command_events(
+            command_id,
+            [
+                {
+                    "event_type": event_type,
+                    "text": text,
+                    "metadata": metadata,
+                    "created_at": created_at,
+                }
+            ],
+        )[0]
+
+    def append_command_events(
+        self,
+        command_id: str,
+        events: list[dict[str, Any]],
+    ) -> list[CommandEvent]:
+        if not events:
+            return []
+        now = utc_now()
+        prepared = [
+            {
+                "id": _new_id("evt"),
+                "event_type": str(event["event_type"]),
+                "text": str(event.get("text") or ""),
+                "metadata": event.get("metadata") if event.get("metadata") is not None else {},
+                "created_at": event.get("created_at") or now,
+            }
+            for event in events
+        ]
         with self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             command = connection.execute(
@@ -359,8 +478,21 @@ class Store:
                 "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM command_event WHERE command_id = ?",
                 (command_id,),
             ).fetchone()
-            seq = int(row["next_seq"])
-            connection.execute(
+            next_seq = int(row["next_seq"])
+            rows = []
+            for offset, event in enumerate(prepared):
+                rows.append(
+                    (
+                        event["id"],
+                        command_id,
+                        next_seq + offset,
+                        event["event_type"],
+                        event["text"],
+                        event["created_at"],
+                        _json_dump(event["metadata"]),
+                    )
+                )
+            connection.executemany(
                 """
                 INSERT INTO command_event (
                     id, command_id, seq, event_type, text, created_at,
@@ -368,25 +500,20 @@ class Store:
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    event_id,
-                    command_id,
-                    seq,
-                    event_type,
-                    text,
-                    created_at,
-                    _json_dump(metadata),
-                ),
+                rows,
             )
-        return CommandEvent(
-            id=event_id,
-            command_id=command_id,
-            seq=seq,
-            event_type=event_type,
-            text=text,
-            created_at=created_at,
-            metadata=metadata or {},
-        )
+        return [
+            CommandEvent(
+                id=row[0],
+                command_id=command_id,
+                seq=int(row[2]),
+                event_type=str(row[3]),
+                text=str(row[4]),
+                created_at=str(row[5]),
+                metadata=dict(prepared[index]["metadata"]),
+            )
+            for index, row in enumerate(rows)
+        ]
 
     def list_command_events(
         self,
@@ -419,6 +546,183 @@ class Store:
             stderr=stderr,
         )
 
+    def is_terminal_command(self, command_id: str) -> bool:
+        command = self.get_command(command_id)
+        return command is not None and command.status in TERMINAL_COMMAND_STATUSES
+
+    def active_command_for_session(self, session_id: str) -> CommandSnapshot | None:
+        commands = self.list_active_commands(session_id=session_id)
+        return commands[0] if commands else None
+
+    def list_active_commands(
+        self,
+        *,
+        session_id: str | None = None,
+    ) -> list[CommandSnapshot]:
+        query = self._command_select_sql()
+        placeholders = ", ".join("?" for _ in ACTIVE_COMMAND_STATUSES)
+        values: list[Any] = list(ACTIVE_COMMAND_STATUSES)
+        conditions = [f"command.status IN ({placeholders})"]
+        if session_id is not None:
+            conditions.append("command.session_id = ?")
+            values.append(session_id)
+        query += " WHERE " + " AND ".join(conditions)
+        query += """
+            ORDER BY
+                CASE command.status
+                    WHEN 'running' THEN 0
+                    WHEN 'starting' THEN 1
+                    ELSE 2
+                END,
+                command.started_at,
+                command.updated_at,
+                command.id
+        """
+        with self._connect() as connection:
+            rows = connection.execute(query, values).fetchall()
+        return [self._command_from_row(row) for row in rows]
+
+    def session_owned_by(self, session_id: str, owner: str) -> bool:
+        session = self.get_session(session_id)
+        if session is None:
+            return False
+        return owner in {
+            session.metadata.get("owner"),
+            session.metadata.get("daemon_id"),
+        }
+
+    def finish_command(
+        self,
+        command_id: str,
+        *,
+        status: str,
+        event_type: str,
+        event_text: str = "",
+        exit_code: int | None = None,
+        stdout_tail: str = "",
+        stderr_tail: str = "",
+        output_hash: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        ended_at: str | None = None,
+    ) -> CommandSnapshot:
+        ended_at = ended_at or utc_now()
+        with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM command WHERE id = ?",
+                (command_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"Unknown command: {command_id}")
+            if row["status"] in TERMINAL_COMMAND_STATUSES:
+                existing = connection.execute(
+                    self._command_select_sql() + " WHERE command.id = ?",
+                    (command_id,),
+                ).fetchone()
+                if existing is None:
+                    raise KeyError(f"Unknown command: {command_id}")
+                return self._command_from_row(existing)
+
+            seq_row = connection.execute(
+                "SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM command_event WHERE command_id = ?",
+                (command_id,),
+            ).fetchone()
+            connection.execute(
+                """
+                INSERT INTO command_event (
+                    id, command_id, seq, event_type, text, created_at,
+                    metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    _new_id("evt"),
+                    command_id,
+                    int(seq_row["next_seq"]),
+                    event_type,
+                    event_text,
+                    ended_at,
+                    _json_dump(None),
+                ),
+            )
+            cursor = connection.execute(
+                """
+                UPDATE command
+                SET status = ?,
+                    exit_code = ?,
+                    ended_at = ?,
+                    stdout_tail = ?,
+                    stderr_tail = ?,
+                    output_hash = ?,
+                    metadata_json = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    status,
+                    exit_code,
+                    ended_at,
+                    stdout_tail[-TAIL_LIMIT:],
+                    stderr_tail[-TAIL_LIMIT:],
+                    output_hash,
+                    _json_dump(metadata),
+                    ended_at,
+                    command_id,
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"Unknown command: {command_id}")
+
+        snapshot = self.get_command(command_id)
+        if snapshot is None:
+            raise KeyError(f"Unknown command: {command_id}")
+        return snapshot
+
+    @staticmethod
+    def _session_select_sql() -> str:
+        active_statuses = ", ".join(repr(status) for status in ACTIVE_COMMAND_STATUSES)
+        return f"""
+            SELECT
+                session.*,
+                (
+                    SELECT COUNT(*)
+                    FROM command
+                    WHERE command.session_id = session.id
+                ) AS command_count,
+                (
+                    SELECT COUNT(*)
+                    FROM command
+                    WHERE command.session_id = session.id
+                      AND command.status IN ({active_statuses})
+                ) AS active_command_count
+            FROM session
+        """
+
+    @staticmethod
+    def _command_select_sql() -> str:
+        return """
+            SELECT
+                command.*,
+                (
+                    SELECT COUNT(*)
+                    FROM command_event
+                    WHERE command_event.command_id = command.id
+                ) AS event_count,
+                (
+                    SELECT COUNT(*)
+                    FROM command_event
+                    WHERE command_event.command_id = command.id
+                      AND command_event.event_type = 'stdout'
+                ) AS stdout_event_count,
+                (
+                    SELECT COUNT(*)
+                    FROM command_event
+                    WHERE command_event.command_id = command.id
+                      AND command_event.event_type = 'stderr'
+                ) AS stderr_event_count
+            FROM command
+        """
+
     @staticmethod
     def _session_from_row(row: sqlite3.Row) -> SessionSnapshot:
         return SessionSnapshot(
@@ -431,6 +735,10 @@ class Store:
             updated_at=row["updated_at"],
             closed_at=row["closed_at"],
             metadata=_json_load(row["metadata_json"]),
+            command_count=int(row["command_count"]) if "command_count" in row.keys() else 0,
+            active_command_count=(
+                int(row["active_command_count"]) if "active_command_count" in row.keys() else 0
+            ),
         )
 
     @staticmethod
@@ -450,6 +758,13 @@ class Store:
             stderr_tail=row["stderr_tail"],
             output_hash=row["output_hash"],
             metadata=_json_load(row["metadata_json"]),
+            event_count=int(row["event_count"]) if "event_count" in row.keys() else 0,
+            stdout_event_count=(
+                int(row["stdout_event_count"]) if "stdout_event_count" in row.keys() else 0
+            ),
+            stderr_event_count=(
+                int(row["stderr_event_count"]) if "stderr_event_count" in row.keys() else 0
+            ),
         )
 
     @staticmethod
