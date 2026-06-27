@@ -6,8 +6,12 @@ import sys
 import tempfile
 import threading
 import time
-import tomllib
 import json
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover
+    tomllib = None  # type: ignore[assignment]
 import unittest
 from pathlib import Path
 
