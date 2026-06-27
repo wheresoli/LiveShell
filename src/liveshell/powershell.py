@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import sys
@@ -8,8 +9,30 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Generator, List
 
-from .runtime import PreloadableSession
+from .runtime import AsyncPreloadableSession, PreloadableSession
 from .utils import Environment
+
+
+@dataclass(frozen=True)
+class PowerShellResult:
+    command: str
+    output: list[Any]
+    errors: list[str]
+    had_errors: bool
+    exit_code: int
+    last_exit_code: int | None = None
+
+    @property
+    def stdout(self) -> str:
+        return "\n".join(str(item) for item in self.output)
+
+    @property
+    def stderr(self) -> str:
+        return "\n".join(self.errors)
+
+    def check_returncode(self) -> None:
+        if self.exit_code != 0:
+            raise RuntimeError(self.stderr or "PowerShell command failed.")
 
 
 class PowerShell(PreloadableSession):
@@ -30,12 +53,18 @@ class PowerShell(PreloadableSession):
     _LOADED_RUNTIME: str | None = None
     runtime = None
     
-    def __init__(self, pshome: str | os.PathLike[str] | None = None):
+    def __init__(
+        self,
+        pshome: str | os.PathLike[str] | None = None,
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+    ):
         self.installations = list(self.find_installations(pshome))
         self.installation = self.installations[0] if self.installations else None
         if self.installation is None:
             raise RuntimeError("Could not find a PowerShell installation.")
         self.pshome = self.installation.home
+        self.cwd = Path(cwd) if cwd is not None else None
         self.preload(self.pshome)
 
         from System.Management.Automation import PowerShell as DotNetPowerShell
@@ -51,6 +80,8 @@ class PowerShell(PreloadableSession):
         initial_state = InitialSessionState.CreateDefault()
         self.runspace = RunspaceFactory.CreateRunspace(initial_state)
         self.runspace.Open()
+        if self.cwd is not None:
+            self.run(f"Set-Location -LiteralPath {self._quote_string(str(self.cwd))}")
 
     @classmethod
     def is_preloaded(cls) -> bool:
@@ -236,10 +267,45 @@ class PowerShell(PreloadableSession):
     def is_valid_home(path: Path) -> bool:
         return PowerShell.describe_installation(path) is not None
 
+    @staticmethod
+    def _quote_string(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    @staticmethod
+    def _reset_last_exit_code_script() -> str:
+        return "$global:LASTEXITCODE = $null"
+
+    @staticmethod
+    def _read_last_exit_code_script() -> str:
+        return (
+            "if (Get-Variable -Name LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue) "
+            "{ $global:LASTEXITCODE } else { $null }"
+        )
+
+    @staticmethod
+    def _coerce_last_exit_code(value: Any) -> int | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            return int(text)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _command_exit_code(*, had_errors: bool, last_exit_code: int | None) -> int:
+        if last_exit_code is not None and last_exit_code != 0:
+            return last_exit_code
+        if had_errors:
+            return 1
+        return last_exit_code if last_exit_code is not None else 0
+
     def is_running(self) -> bool:
         return not self._closed and getattr(self, "runspace", None) is not None
 
-    def run(self, script: str, *, check: bool = True) -> list[Any]:
+    def run_result(self, script: str, *, check: bool = True) -> PowerShellResult:
         if not self.is_running():
             raise RuntimeError("PowerShell session is closed.")
 
@@ -247,6 +313,8 @@ class PowerShell(PreloadableSession):
             ps = self._PowerShell.Create()
             try:
                 ps.Runspace = self.runspace
+                ps.AddScript(self._reset_last_exit_code_script(), False)
+                ps.AddStatement()
                 ps.AddScript(script, False)
 
                 output = list(ps.Invoke())
@@ -254,11 +322,25 @@ class PowerShell(PreloadableSession):
                 had_errors = bool(ps.HadErrors)
             finally:
                 ps.Dispose()
+            last_exit_code = self._read_last_exit_code()
 
-        if check and had_errors:
-            raise RuntimeError("\n".join(errors))
+        result = PowerShellResult(
+            command=script,
+            output=output,
+            errors=errors,
+            had_errors=had_errors,
+            exit_code=self._command_exit_code(
+                had_errors=had_errors,
+                last_exit_code=last_exit_code,
+            ),
+            last_exit_code=last_exit_code,
+        )
+        if check:
+            result.check_returncode()
+        return result
 
-        return output
+    def run(self, script: str, *, check: bool = True) -> list[Any]:
+        return self.run_result(script, check=check).output
 
     def text(self, script: str, *, check: bool = True) -> str:
         if not self.is_running():
@@ -268,6 +350,8 @@ class PowerShell(PreloadableSession):
             ps = self._PowerShell.Create()
             try:
                 ps.Runspace = self.runspace
+                ps.AddScript(self._reset_last_exit_code_script(), False)
+                ps.AddStatement()
                 ps.AddScript(script, False)
                 ps.AddCommand("Out-String")
 
@@ -276,22 +360,185 @@ class PowerShell(PreloadableSession):
                 had_errors = bool(ps.HadErrors)
             finally:
                 ps.Dispose()
+            last_exit_code = self._read_last_exit_code()
 
-        if check and had_errors:
-            raise RuntimeError("\n".join(errors))
+        invoke_result = PowerShellResult(
+            command=script,
+            output=result,
+            errors=errors,
+            had_errors=had_errors,
+            exit_code=self._command_exit_code(
+                had_errors=had_errors,
+                last_exit_code=last_exit_code,
+            ),
+            last_exit_code=last_exit_code,
+        )
+        if check:
+            invoke_result.check_returncode()
 
         return "".join(str(item) for item in result).rstrip()
+
+    def _read_last_exit_code(self) -> int | None:
+        ps = self._PowerShell.Create()
+        try:
+            ps.Runspace = self.runspace
+            ps.AddScript(self._read_last_exit_code_script(), False)
+            values = list(ps.Invoke())
+            if not values:
+                return None
+            return self._coerce_last_exit_code(values[-1])
+        finally:
+            ps.Dispose()
 
     def close(self) -> None:
         if self._closed:
             return
 
-        runspace = getattr(self, "runspace", None)
-        if runspace is not None:
-            try:
-                runspace.Close()
-            finally:
-                runspace.Dispose()
+        with self._lock:
+            if self._closed:
+                return
 
-        self._closed = True
-        self.runspace = None
+            runspace = getattr(self, "runspace", None)
+            if runspace is not None:
+                try:
+                    runspace.Close()
+                finally:
+                    runspace.Dispose()
+
+            self._closed = True
+            self.runspace = None
+
+
+class AsyncPowerShell(AsyncPreloadableSession):
+    Installation = PowerShell.Installation
+
+    def __init__(
+        self,
+        pshome: str | os.PathLike[str] | None = None,
+        *,
+        cwd: str | os.PathLike[str] | None = None,
+    ):
+        self.pshome = pshome
+        self.cwd = cwd
+        self._session: PowerShell | None = None
+        self._start_lock = asyncio.Lock()
+        self._operation_lock = asyncio.Lock()
+        self._closed = False
+
+    def __del__(self):
+        session = getattr(self, "_session", None)
+        if session is not None:
+            try:
+                session.close()
+            except Exception:
+                pass
+
+    @classmethod
+    def is_preloaded(cls) -> bool:
+        return PowerShell.is_preloaded()
+
+    @classmethod
+    def preload(cls, path: str | os.PathLike[str] | None = None) -> None:
+        PowerShell.preload(path)
+
+    @classmethod
+    def find(cls, path: str | os.PathLike[str] | None = None, **kwargs) -> Path | None:
+        return PowerShell.find(path, **kwargs)
+
+    @classmethod
+    def find_installation(
+        cls,
+        path: str | os.PathLike[str] | None = None,
+        **kwargs,
+    ) -> PowerShell.Installation | None:
+        return PowerShell.find_installation(path, **kwargs)
+
+    @classmethod
+    def find_installations(
+        cls,
+        path: str | os.PathLike[str] | None = None,
+        **kwargs,
+    ) -> Generator[PowerShell.Installation, None, None]:
+        return PowerShell.find_installations(path, **kwargs)
+
+    @classmethod
+    def describe_installation(cls, home: Path) -> PowerShell.Installation | None:
+        return PowerShell.describe_installation(home)
+
+    @staticmethod
+    def find_desktop_assembly() -> Path | None:
+        return PowerShell.find_desktop_assembly()
+
+    @classmethod
+    def versioned_homes(cls, root: Path) -> list[Path]:
+        return PowerShell.versioned_homes(root)
+
+    @staticmethod
+    def _version_sort_key(path: Path) -> tuple[tuple[int, ...], bool, str]:
+        return PowerShell._version_sort_key(path)
+
+    @staticmethod
+    def is_valid_home(path: Path) -> bool:
+        return PowerShell.is_valid_home(path)
+
+    async def start(self):
+        if self._closed:
+            raise RuntimeError("AsyncPowerShell session is closed.")
+        if self.is_running():
+            return self
+
+        async with self._start_lock:
+            if self._closed:
+                raise RuntimeError("AsyncPowerShell session is closed.")
+            if self._session is None:
+                self._session = await asyncio.to_thread(
+                    PowerShell,
+                    self.pshome,
+                    cwd=self.cwd,
+                )
+            elif not self._session.is_running():
+                raise RuntimeError("AsyncPowerShell session is closed.")
+
+        return self
+
+    def is_running(self) -> bool:
+        return (
+            not self._closed
+            and self._session is not None
+            and self._session.is_running()
+        )
+
+    async def run(self, script: str, *, check: bool = True) -> list[Any]:
+        await self.start()
+        if self._session is None:
+            raise RuntimeError("AsyncPowerShell session is not connected.")
+        async with self._operation_lock:
+            return await asyncio.to_thread(self._session.run, script, check=check)
+
+    async def run_result(self, script: str, *, check: bool = True) -> PowerShellResult:
+        await self.start()
+        if self._session is None:
+            raise RuntimeError("AsyncPowerShell session is not connected.")
+        async with self._operation_lock:
+            return await asyncio.to_thread(self._session.run_result, script, check=check)
+
+    async def text(self, script: str, *, check: bool = True) -> str:
+        await self.start()
+        if self._session is None:
+            raise RuntimeError("AsyncPowerShell session is not connected.")
+        async with self._operation_lock:
+            return await asyncio.to_thread(self._session.text, script, check=check)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+
+        async with self._operation_lock:
+            if self._closed:
+                return
+
+            session = self._session
+            if session is not None:
+                await asyncio.to_thread(session.close)
+
+            self._closed = True
