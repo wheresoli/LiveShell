@@ -1,3 +1,7 @@
+<p align="center">
+<img width="356" height="234" alt="Hands_of_God_and_Adam" src="https://github.com/user-attachments/assets/b30a03e8-e7a4-4a83-b9a3-5aa0bc9d3e2c" />
+</p>
+
 # LiveShell
 
 LiveShell is a generic local execution substrate for Python. It provides persistent shell sessions, synchronous and asynchronous APIs, durable command records, replayable command events, and a small JSON-lines daemon protocol for process-managed integrations.
