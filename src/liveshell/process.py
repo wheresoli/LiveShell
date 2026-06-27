@@ -150,7 +150,7 @@ class ProcessSession(ProcessSessionBase, ProcessBackedSession):
                     if line == "":
                         if self.process.poll() is not None:
                             raise RuntimeError(f"{self.__class__.__name__} session exited unexpectedly.")
-                        continue
+                        raise RuntimeError(f"{self.__class__.__name__} stdout pipe closed unexpectedly.")
 
                     if self.is_stderr_begin(line, token):
                         reading_stderr = True
@@ -329,8 +329,7 @@ class AsyncProcessSession(ProcessSessionBase, AsyncProcessBackedSession):
                 if line_bytes == b"":
                     if process.returncode is not None:
                         raise RuntimeError(f"{self.__class__.__name__} session exited unexpectedly.")
-                    await asyncio.sleep(0)
-                    continue
+                    raise RuntimeError(f"{self.__class__.__name__} stdout pipe closed unexpectedly.")
 
                 line = line_bytes.decode(self.encoding, errors="replace")
                 parsed = self.parse_sentinel(line, token)
