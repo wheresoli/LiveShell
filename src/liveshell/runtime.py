@@ -13,7 +13,7 @@ class Session(ABC):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close()    
+        self.close()
 
     def __del__(self):
         try:

@@ -70,7 +70,7 @@ class PowerShell(PreloadableSession):
 
             if installation.uses_coreclr and Environment.is_windows():
                 home_str = str(home)
-                if not any(str(d) == home_str for d in cls._DLL_DIRECTORIES):
+                if not any(d.path == home_str for d in cls._DLL_DIRECTORIES):
                     dll_directory = os.add_dll_directory(home_str)
 
             if str(home) not in sys.path:
@@ -133,7 +133,7 @@ class PowerShell(PreloadableSession):
 
         if os.environ.get("PSHOME"):
             pshome = Path(os.environ["PSHOME"])
-            if cls.is_valid_home(pshome):
+            if pshome.is_dir() and cls.is_valid_home(pshome):
                 candidates.append(pshome)
 
         executable = Environment.executable("pwsh.exe", "pwsh")
