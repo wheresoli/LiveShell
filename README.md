@@ -1,5 +1,5 @@
 <p align="center">
-<img width="356" height="234" alt="Hands_of_God_and_Adam" src="https://github.com/user-attachments/assets/b30a03e8-e7a4-4a83-b9a3-5aa0bc9d3e2c" />
+<img width="356" height="141" alt="banner" src="https://github.com/user-attachments/assets/5a7ac185-46ff-4ca7-837c-e13b627c7179" />
 </p>
 
 # LiveShell
