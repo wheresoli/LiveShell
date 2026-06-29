@@ -2,17 +2,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 import sys
+import time
+from pathlib import Path
 from typing import Any
 
 from .capabilities import discover_capabilities
-from .client import LiveShellClient
+from .client import LiveShellClient, LiveShellClientError
 from .daemon import (
     JsonLineDaemon,
     LiveShellService,
     protocol_error_payload,
     read_daemon_metadata,
     request_daemon_shutdown_marker,
+    serve_socket,
 )
 from .handles import CommandHandle
 from .store import Store
@@ -82,6 +87,24 @@ def build_parser() -> argparse.ArgumentParser:
     daemon_stdio.add_argument("--log-stderr", action="store_true")
     daemon_stdio.add_argument("--log-file")
     daemon_stdio.set_defaults(func=daemon_stdio_command, raw_stdio=True)
+
+    daemon_serve = daemon_subcommands.add_parser("serve")
+    daemon_serve.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    daemon_serve.add_argument("--host", default="127.0.0.1")
+    daemon_serve.add_argument("--port", type=int, default=0)
+    daemon_serve.set_defaults(func=daemon_serve_command, raw_stdio=True)
+
+    daemon_start = daemon_subcommands.add_parser("start")
+    daemon_start.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    daemon_start.add_argument("--host", default="127.0.0.1")
+    daemon_start.add_argument("--port", type=int, default=0)
+    daemon_start.add_argument("--ready-timeout-seconds", type=float, default=10.0)
+    daemon_start.set_defaults(func=daemon_start_command)
+
+    daemon_stop = daemon_subcommands.add_parser("stop")
+    daemon_stop.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
+    daemon_stop.add_argument("--reason")
+    daemon_stop.set_defaults(func=daemon_stop_command)
 
     daemon_status = daemon_subcommands.add_parser("status")
     daemon_status.add_argument("--state-dir", default=DEFAULT_STATE_DIR)
@@ -189,6 +212,80 @@ def daemon_stdio_command(args: argparse.Namespace) -> dict[str, Any]:
     finally:
         _emit_daemon_log(args, "daemon_stopped", service.daemon_status())
     return {"exited": True}
+
+
+def daemon_serve_command(args: argparse.Namespace) -> dict[str, Any]:
+    # Blocking: runs the persistent socket daemon until shutdown. Launched detached
+    # by `daemon start`; its stdout is not consumed, so it is marked raw_stdio.
+    return serve_socket(args.state_dir, host=args.host, port=int(args.port))
+
+
+def daemon_start_command(args: argparse.Namespace) -> dict[str, Any]:
+    state_dir = Path(args.state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    existing = read_daemon_metadata(state_dir)
+    existing_meta = existing.get("metadata") or {}
+    if existing.get("running") and existing_meta.get("socket_port"):
+        try:
+            with LiveShellClient.connect(state_dir) as client:
+                client.daemon_status()
+            return {"already_running": True, "daemon": existing}
+        except LiveShellClientError:
+            pass  # stale metadata; (re)spawn below
+
+    command = [
+        sys.executable, "-m", "liveshell.cli", "daemon", "serve",
+        "--state-dir", str(state_dir), "--host", args.host, "--port", str(args.port),
+    ]
+    creationflags = 0
+    start_new_session = False
+    if os.name == "nt":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: outlive this launcher, own group.
+        creationflags = 0x00000008 | 0x00000200
+    else:
+        start_new_session = True
+    subprocess.Popen(
+        command,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(state_dir),
+        env=LiveShellClient._child_env(None),
+        creationflags=creationflags,
+        start_new_session=start_new_session,
+        close_fds=True,
+    )
+
+    deadline = time.monotonic() + float(args.ready_timeout_seconds)
+    last_error: str | None = None
+    while time.monotonic() < deadline:
+        meta = read_daemon_metadata(state_dir)
+        if meta.get("running") and (meta.get("metadata") or {}).get("socket_port"):
+            try:
+                with LiveShellClient.connect(state_dir) as client:
+                    status = client.daemon_status()
+                return {"started": True, "daemon": meta, "status": status}
+            except LiveShellClientError as exc:
+                last_error = str(exc)
+        time.sleep(0.05)
+    raise RuntimeError(
+        f"Timed out waiting for the background LiveShell daemon to become ready. {last_error or ''}".strip()
+    )
+
+
+def daemon_stop_command(args: argparse.Namespace) -> dict[str, Any]:
+    state_dir = Path(args.state_dir)
+    meta = read_daemon_metadata(state_dir)
+    metadata = meta.get("metadata") or {}
+    if meta.get("running") and metadata.get("socket_port"):
+        try:
+            with LiveShellClient.connect(state_dir) as client:
+                result = client.daemon_shutdown(reason=args.reason)
+            return {"stopped": True, "transport": "socket", "result": result}
+        except LiveShellClientError as exc:
+            fallback = request_daemon_shutdown_marker(state_dir, reason=args.reason)
+            return {"stopped": False, "transport": "marker", "error": str(exc), "result": fallback}
+    return {"stopped": False, "transport": "marker", "result": request_daemon_shutdown_marker(state_dir, reason=args.reason)}
 
 
 def daemon_status_command(args: argparse.Namespace) -> dict[str, Any]:

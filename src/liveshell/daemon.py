@@ -117,10 +117,19 @@ class LiveShellService:
             else max(1, int(event_chunk_size))
         )
         self._shutdown_requested = threading.Event()
+        self._socket_host: str | None = None
+        self._socket_port: int | None = None
         self._clear_shutdown_marker()
         self._write_daemon_state()
         if recover:
             self.recover_orphaned_records()
+
+    def set_socket_address(self, host: str, port: int) -> None:
+        """Record the loopback address a background (socket-transport) daemon is
+        listening on so cross-process clients can reconnect via the state dir."""
+        self._socket_host = str(host)
+        self._socket_port = int(port)
+        self._write_daemon_state()
 
     def daemon_status(self) -> dict[str, Any]:
         with self._lock:
@@ -147,6 +156,8 @@ class LiveShellService:
             "active_command_ids": [command.id for command in active_commands],
             "queued_by_session": queued_by_session,
             "command_count": len(commands),
+            "socket_host": self._socket_host,
+            "socket_port": self._socket_port,
         }
 
     def request_shutdown(self, *, reason: str | None = None) -> dict[str, Any]:
@@ -196,6 +207,8 @@ class LiveShellService:
             "started_at": self.started_at,
             "updated_at": utc_now(),
             "shutdown_requested": self._shutdown_requested.is_set(),
+            "socket_host": self._socket_host,
+            "socket_port": self._socket_port,
         }
         self._write_json_file(DAEMON_STATE_FILE, payload)
         self._write_json_file(DAEMON_LOCK_FILE, payload)
@@ -1195,6 +1208,101 @@ class JsonLineDaemon:
 def serve_stdio(state_dir: str | Path, *, once: bool = False) -> None:
     service = LiveShellService(Store.from_state_dir(state_dir), transport="stdio")
     JsonLineDaemon(service).serve_stdio(once=once)
+
+
+SOCKET_ACCEPT_POLL_SECONDS = 0.5
+
+
+def _serve_socket_connection(daemon: "JsonLineDaemon", conn: Any) -> None:
+    """Serve one persistent client connection: the same JSON-line request/response
+    protocol as stdio, but framed over a socket. Closing the client socket (e.g. the
+    launching process exits) ends only this connection; the daemon keeps running."""
+    import socket as _socket
+
+    reader = conn.makefile("r", encoding="utf-8")
+    writer = conn.makefile("w", encoding="utf-8")
+    try:
+        for line in reader:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                request = json.loads(line)
+                if not isinstance(request, dict):
+                    raise ValueError("Request must be a JSON object.")
+                response = daemon.handle_request(request)
+            except Exception as exc:
+                response = {"id": None, "ok": False, "error": protocol_error_payload(exc)}
+            try:
+                writer.write(json.dumps(response, separators=(",", ":")) + "\n")
+                writer.flush()
+            except OSError:
+                break
+            if daemon.service.shutdown_requested():
+                break
+    except (OSError, _socket.error):
+        pass
+    finally:
+        for stream in (reader, writer):
+            try:
+                stream.close()
+            except Exception:
+                pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def serve_socket(
+    state_dir: str | Path,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 0,
+    recover: bool = True,
+) -> dict[str, Any]:
+    """Run a persistent LiveShell daemon over a loopback TCP socket.
+
+    Unlike the stdio transport (whose lifetime is bound to the launching process's
+    pipes), a socket daemon keeps running — and its commands keep executing — after
+    any client disconnects. The bound address is published into the state dir so a
+    fresh client process can reconnect via ``LiveShellClient.connect(state_dir)``.
+    Intended to be launched detached by ``liveshell daemon start``."""
+    import socket
+
+    service = LiveShellService(Store.from_state_dir(state_dir), transport="tcp", recover=recover)
+    daemon = JsonLineDaemon(service)
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        server.bind((host, int(port)))
+        server.listen(128)
+        bound_host, bound_port = server.getsockname()[:2]
+        service.set_socket_address(bound_host, int(bound_port))
+        server.settimeout(SOCKET_ACCEPT_POLL_SECONDS)
+        while not service.shutdown_requested():
+            try:
+                conn, _addr = server.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                break
+            conn.settimeout(None)
+            thread = threading.Thread(
+                target=_serve_socket_connection,
+                args=(daemon, conn),
+                daemon=True,
+                name="liveshell-socket-conn",
+            )
+            thread.start()
+    finally:
+        try:
+            server.close()
+        except OSError:
+            pass
+        if not service.shutdown_requested():
+            service.request_shutdown(reason="socket_server_stopped")
+    return {"exited": True, "daemon_id": service.daemon_id, "socket_host": service._socket_host, "socket_port": service._socket_port}
 
 
 def read_daemon_metadata(state_dir: str | Path) -> dict[str, Any]:
