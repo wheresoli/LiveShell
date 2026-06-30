@@ -20,10 +20,10 @@ C:\tmp\liveshell-release-venv\Scripts\python.exe -c "import liveshell; print(liv
 
 ## Version And Tag
 
-Update `pyproject.toml` only for an actual release. For the current package version `0.1.0`, use:
+Update `pyproject.toml` only for an actual release. For the current package version `0.2.0`, use:
 
 ```powershell
-git tag v0.1.0
+git tag v0.2.0
 ```
 
 ## Install Commands
@@ -43,5 +43,5 @@ pip install ".[powershell]"
 Git tag install:
 
 ```powershell
-pip install "liveshell @ git+https://github.com/openai/liveshell.git@v0.1.0"
+pip install "liveshell @ git+https://github.com/openai/liveshell.git@v0.2.0"
 ```
