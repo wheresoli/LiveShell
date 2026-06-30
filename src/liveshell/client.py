@@ -149,7 +149,7 @@ class LiveShellClient:
         metadata = meta.get("metadata") or {}
         host = metadata.get("socket_host")
         port = metadata.get("socket_port")
-        if not meta.get("running") or not host or not port:
+        if not host or not port:
             raise LiveShellProtocolError(
                 "No running socket daemon was found in the state dir. "
                 "Start one with `liveshell daemon start --state-dir <dir>`."

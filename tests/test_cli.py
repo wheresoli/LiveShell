@@ -15,7 +15,7 @@ SRC = ROOT / "src"
 if str(SRC) not in sys.path:
     sys.path.insert(0, str(SRC))
 
-from liveshell.cli import main  # noqa: E402
+from liveshell.cli import daemon_start_command, main  # noqa: E402
 from liveshell import Bash, Cmd  # noqa: E402
 from liveshell.models import CommandSpec, SessionSpec  # noqa: E402
 from liveshell.store import Store  # noqa: E402
@@ -291,6 +291,24 @@ class CliTests(unittest.TestCase):
             self.assertEqual(status, 1)
             self.assertFalse(payload["ok"])
             self.assertEqual(payload["error"]["type"], "KeyError")
+
+    def test_daemon_start_reports_early_daemon_process_exit(self) -> None:
+        class FailedProcess:
+            def poll(self) -> int:
+                return 23
+
+        with tempfile.TemporaryDirectory(prefix="liveshell-cli-daemon-") as temp_dir:
+            args = mock.Mock()
+            args.state_dir = temp_dir
+            args.host = "127.0.0.1"
+            args.port = 0
+            args.ready_timeout_seconds = 1.0
+
+            with mock.patch("liveshell.cli.subprocess.Popen", return_value=FailedProcess()):
+                with self.assertRaises(RuntimeError) as context:
+                    daemon_start_command(args)
+
+        self.assertIn("exit code 23", str(context.exception))
 
 
 if __name__ == "__main__":

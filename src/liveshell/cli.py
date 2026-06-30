@@ -240,11 +240,13 @@ def daemon_start_command(args: argparse.Namespace) -> dict[str, Any]:
     creationflags = 0
     start_new_session = False
     if os.name == "nt":
-        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP: outlive this launcher, own group.
-        creationflags = 0x00000008 | 0x00000200
+        creationflags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
     else:
         start_new_session = True
-    subprocess.Popen(
+    process = subprocess.Popen(
         command,
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
@@ -259,6 +261,12 @@ def daemon_start_command(args: argparse.Namespace) -> dict[str, Any]:
     deadline = time.monotonic() + float(args.ready_timeout_seconds)
     last_error: str | None = None
     while time.monotonic() < deadline:
+        returncode = process.poll()
+        if returncode is not None:
+            raise RuntimeError(
+                "Background LiveShell daemon exited before becoming ready "
+                f"(exit code {returncode})."
+            )
         meta = read_daemon_metadata(state_dir)
         if meta.get("running") and (meta.get("metadata") or {}).get("socket_port"):
             try:

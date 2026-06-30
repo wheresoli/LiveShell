@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections import deque
 import hashlib
+import ipaddress
 import json
 from numbers import Real
 import os
@@ -1270,12 +1271,13 @@ def serve_socket(
     Intended to be launched detached by ``liveshell daemon start``."""
     import socket
 
+    normalized_host = _normalize_loopback_host(host)
     service = LiveShellService(Store.from_state_dir(state_dir), transport="tcp", recover=recover)
     daemon = JsonLineDaemon(service)
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
-        server.bind((host, int(port)))
+        server.bind((normalized_host, int(port)))
         server.listen(128)
         bound_host, bound_port = server.getsockname()[:2]
         service.set_socket_address(bound_host, int(bound_port))
@@ -1303,6 +1305,21 @@ def serve_socket(
         if not service.shutdown_requested():
             service.request_shutdown(reason="socket_server_stopped")
     return {"exited": True, "daemon_id": service.daemon_id, "socket_host": service._socket_host, "socket_port": service._socket_port}
+
+
+def _normalize_loopback_host(host: str) -> str:
+    text = str(host).strip()
+    if not text:
+        raise ValueError("host must be a loopback IPv4 address or 'localhost'.")
+    if text.lower() == "localhost":
+        return "127.0.0.1"
+    try:
+        parsed = ipaddress.ip_address(text)
+    except ValueError as exc:
+        raise ValueError("host must be a loopback IPv4 address or 'localhost'.") from exc
+    if parsed.version != 4 or not parsed.is_loopback:
+        raise ValueError("host must be a loopback IPv4 address or 'localhost'.")
+    return str(parsed)
 
 
 def read_daemon_metadata(state_dir: str | Path) -> dict[str, Any]:

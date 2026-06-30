@@ -25,7 +25,7 @@ if str(SRC) not in sys.path:
 
 from liveshell import Bash, Cmd  # noqa: E402
 from liveshell.client import LiveShellClient, LiveShellClientError  # noqa: E402
-from liveshell.daemon import read_daemon_metadata, serve_socket  # noqa: E402
+from liveshell.daemon import DAEMON_STATE_FILE, read_daemon_metadata, serve_socket  # noqa: E402
 from liveshell.models import TERMINAL_COMMAND_STATUSES  # noqa: E402
 
 
@@ -123,6 +123,59 @@ class InProcessSocketDaemonTests(unittest.TestCase):
                 result = client_b.command_result(command_id)
                 self.assertIn("alpha", result.stdout)
                 client_b.daemon_shutdown(reason="test-done")
+        finally:
+            server_thread.join(timeout=5.0)
+        self.assertFalse(errors, f"serve_socket raised: {errors}")
+        self.assertFalse(server_thread.is_alive())
+
+    def test_serve_socket_rejects_non_loopback_host(self) -> None:
+        with self.assertRaises(ValueError):
+            serve_socket(self.state, host="0.0.0.0", port=0)
+
+    def test_serve_socket_normalizes_localhost_to_ipv4(self) -> None:
+        errors: list[BaseException] = []
+
+        def serve() -> None:
+            try:
+                serve_socket(self.state, host="localhost", port=0)
+            except BaseException as exc:  # noqa: BLE001 - surface to the test thread
+                errors.append(exc)
+
+        server_thread = threading.Thread(target=serve, daemon=True)
+        server_thread.start()
+        try:
+            meta = wait_for_socket(self.state)
+            self.assertEqual((meta.get("metadata") or {}).get("socket_host"), "127.0.0.1")
+            with LiveShellClient.connect(self.state) as client:
+                client.daemon_shutdown(reason="test-done")
+        finally:
+            server_thread.join(timeout=5.0)
+        self.assertFalse(errors, f"serve_socket raised: {errors}")
+        self.assertFalse(server_thread.is_alive())
+
+    def test_connect_uses_socket_metadata_even_when_pid_probe_is_false(self) -> None:
+        errors: list[BaseException] = []
+
+        def serve() -> None:
+            try:
+                serve_socket(self.state, host="127.0.0.1", port=0)
+            except BaseException as exc:  # noqa: BLE001 - surface to the test thread
+                errors.append(exc)
+
+        server_thread = threading.Thread(target=serve, daemon=True)
+        server_thread.start()
+        try:
+            wait_for_socket(self.state)
+            daemon_state_path = self.state / DAEMON_STATE_FILE
+            payload = json.loads(daemon_state_path.read_text(encoding="utf-8"))
+            payload["pid"] = 0
+            daemon_state_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+            meta = read_daemon_metadata(self.state)
+            self.assertFalse(meta["running"])
+            with LiveShellClient.connect(self.state) as client:
+                status = client.daemon_status()
+                self.assertEqual(status["transport"], "tcp")
+                client.daemon_shutdown(reason="test-done")
         finally:
             server_thread.join(timeout=5.0)
         self.assertFalse(errors, f"serve_socket raised: {errors}")
