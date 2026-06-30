@@ -1385,6 +1385,8 @@ def request_daemon_shutdown_marker(
 def _pid_is_running(pid: Any) -> bool:
     if not isinstance(pid, int) or pid <= 0:
         return False
+    if os.name == "nt":
+        return _pid_is_running_windows(pid)
     try:
         os.kill(pid, 0)
     except OSError:
@@ -1392,3 +1394,30 @@ def _pid_is_running(pid: Any) -> bool:
     except ValueError:
         return False
     return True
+
+
+def _pid_is_running_windows(pid: int) -> bool:
+    """Liveness probe for Windows.
+
+    ``os.kill(pid, 0)`` is a POSIX idiom and is not valid here: on Windows
+    CPython has no special case for signal ``0`` and routes through
+    ``TerminateProcess``, so it neither reliably reports a dead pid nor leaves a
+    live process untouched. Query the process object directly instead.
+    """
+    import ctypes
+
+    SYNCHRONIZE = 0x00100000
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    WAIT_TIMEOUT = 0x00000102
+
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(
+        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid
+    )
+    if not handle:
+        return False
+    try:
+        # A still-running process never signals, so the zero-wait times out.
+        return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
