@@ -1405,15 +1405,20 @@ def _pid_is_running_windows(pid: int) -> bool:
     live process untouched. Query the process object directly instead.
     """
     import ctypes
+    from ctypes import wintypes
 
     SYNCHRONIZE = 0x00100000
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     WAIT_TIMEOUT = 0x00000102
 
-    kernel32 = ctypes.windll.kernel32
-    handle = kernel32.OpenProcess(
-        SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, False, pid
-    )
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel32.WaitForSingleObject.restype = wintypes.DWORD
+    kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
     if not handle:
         return False
     try:
