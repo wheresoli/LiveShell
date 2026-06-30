@@ -39,10 +39,10 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/openai/liveshell"
-Documentation = "https://github.com/openai/liveshell#readme"
-Issues = "https://github.com/openai/liveshell/issues"
-Source = "https://github.com/openai/liveshell"
+Homepage = "https://github.com/wheresoli/LiveShell"
+Documentation = "https://github.com/wheresoli/LiveShell#readme"
+Issues = "https://github.com/wheresoli/LiveShell/issues"
+Source = "https://github.com/wheresoli/LiveShell"
 
 [project.scripts]
 liveshell = "liveshell.cli:main"
