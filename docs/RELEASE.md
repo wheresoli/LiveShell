@@ -43,5 +43,5 @@ pip install ".[powershell]"
 Git tag install:
 
 ```powershell
-pip install "liveshell @ git+https://github.com/openai/liveshell.git@v0.2.0"
+pip install "liveshell @ git+https://github.com/wheresoli/LiveShell.git@v0.2.0"
 ```
