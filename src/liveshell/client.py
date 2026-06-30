@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import socket
 import subprocess
 import sys
 import threading
@@ -64,6 +65,7 @@ class LiveShellClient:
         self._output_stream = output_stream
         self._process = process
         self._stderr_stream = stderr_stream
+        self._socket: socket.socket | None = None
         self.request_timeout_seconds = request_timeout_seconds
         self._request_ids = itertools.count(1)
         self._lock = threading.RLock()
@@ -127,6 +129,48 @@ class LiveShellClient:
             stderr_stream=process.stderr,
             request_timeout_seconds=request_timeout_seconds,
         )
+
+    @classmethod
+    def connect(
+        cls,
+        state_dir: str | Path,
+        *,
+        request_timeout_seconds: float | None = 30.0,
+        connect_timeout_seconds: float = 5.0,
+    ) -> LiveShellClient:
+        """Connect to a persistent (socket-transport) daemon published in ``state_dir``.
+
+        The returned client owns no daemon process, so ``close()`` ends only this
+        connection — the background daemon (and any running commands) keeps going.
+        Start one with ``liveshell daemon start`` / ``daemon.serve_socket``."""
+        from .daemon import read_daemon_metadata
+
+        meta = read_daemon_metadata(state_dir)
+        metadata = meta.get("metadata") or {}
+        host = metadata.get("socket_host")
+        port = metadata.get("socket_port")
+        if not host or not port:
+            raise LiveShellProtocolError(
+                "No running socket daemon was found in the state dir. "
+                "Start one with `liveshell daemon start --state-dir <dir>`."
+            )
+        try:
+            sock = socket.create_connection((str(host), int(port)), timeout=connect_timeout_seconds)
+        except OSError as exc:
+            raise LiveShellProtocolError(
+                f"Failed to connect to LiveShell daemon at {host}:{port}: {exc}"
+            ) from exc
+        sock.settimeout(None)
+        reader = sock.makefile("r", encoding="utf-8")
+        writer = sock.makefile("w", encoding="utf-8")
+        client = cls(
+            writer,
+            reader,
+            process=None,
+            request_timeout_seconds=request_timeout_seconds,
+        )
+        client._socket = sock
+        return client
 
     @staticmethod
     def _child_env(env: dict[str, str] | None) -> dict[str, str]:
@@ -564,6 +608,12 @@ class LiveShellClient:
                 stream.close()
             except Exception:
                 pass
+        if self._socket is not None:
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            self._socket = None
 
 
 def _capability_from_dict(data: dict[str, Any]) -> Capability:
