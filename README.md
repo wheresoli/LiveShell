@@ -338,6 +338,27 @@ python examples/async_process_smoke.py
 
 They exercise hosted PowerShell, synchronous process-backed sessions, and async process-backed sessions.
 
+## Platform Validation Matrix
+
+LiveShell's automated platform coverage focuses on the base package behavior that should work on both macOS and Linux without optional extras:
+
+| Platform | Python | Automated checks |
+| --- | --- | --- |
+| Linux | 3.10, 3.11, 3.12, 3.13 | `python -m unittest discover -s tests`, `python scripts/diagnose.py`, `python examples/process_smoke.py`, `python examples/async_process_smoke.py`, `python -m build` |
+| macOS | 3.10, 3.11, 3.12, 3.13 | `python -m unittest discover -s tests`, `python scripts/diagnose.py`, `python examples/process_smoke.py`, `python examples/async_process_smoke.py`, `python -m build` |
+
+This matrix is enforced in GitHub Actions by the `Platform Validation` workflow in `.github/workflows/platform-validation.yml`.
+
+Hosted PowerShell remains an optional path because it requires both a local PowerShell installation and the `powershell` extra:
+
+```powershell
+python -m pip install ".[powershell]"
+python scripts/diagnose.py --preload
+python examples/powershell_smoke.py
+```
+
+Run those hosted PowerShell checks manually on the target macOS/Linux machine when that optional integration matters for a release or deployment.
+
 ## Behavior And Limitations
 
 Process-backed sessions such as `Cmd` and `Bash` keep one child process alive and send commands through it. They preserve shell state, but they are not full terminal or PTY emulators.

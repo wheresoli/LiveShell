@@ -31,7 +31,7 @@ def main() -> int:
     pythonnet_found = importlib.util.find_spec("pythonnet") is not None
     print(f"pythonnet installed: {pythonnet_found}")
     if not pythonnet_found:
-        print("Install with: python -m pip install -r requirements.txt")
+        print('Install with: python -m pip install ".[powershell]"')
 
     installation = PowerShell.find_installation()
     print(f"PowerShell available: {installation is not None}")
