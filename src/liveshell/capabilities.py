@@ -32,7 +32,7 @@ def discover_capabilities() -> list[Capability]:
                 # ($LASTEXITCODE + HadErrors via the .NET runspace).
                 "cmd": "sentinel_parsed",
                 "bash": "sentinel_parsed",
-                "powershell_hosted": "native",
+                "hosted_powershell": "native",
             },
         ),
         Capability(
