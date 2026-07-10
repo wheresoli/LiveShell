@@ -61,8 +61,7 @@ Stable error codes:
 The protocol is transport-agnostic. Two transports are supported, both local-only:
 
 - **stdio** — `liveshell daemon stdio` serves the protocol over the process's stdin/stdout. The daemon's lifetime is bound to the launching process's pipes. This is the default, used by `LiveShellClient.stdio(...)` and `liveshell run`.
-- **socket** — `liveshell daemon serve`/`daemon start` serves the protocol over a **loopback TCP socket** bound to `127.0.0.1` (an ephemeral port unless one is given). The bound address is published to `daemon.json` in the state dir so a fresh client can attach with `LiveShellClient.connect(state_dir)`. Unlike stdio, a socket daemon keeps running — and its commands keep executing — after any client disconnects.
-
+- **socket** — `liveshell daemon serve`/`daemon start` serves the protocol over a **loopback IPv4 TCP socket** (default `127.0.0.1`, an ephemeral port unless one is given). The bound address is published to `daemon.json` in the state dir so a fresh client can attach with `LiveShellClient.connect(state_dir)`. Unlike stdio, a socket daemon keeps running — and its commands keep executing — after any client disconnects.
 The host is validated as loopback-only: non-loopback and non-IPv4 hosts are rejected. There is no remote transport and no auto-started network listener; the socket daemon is opt-in.
 
 ## Security
