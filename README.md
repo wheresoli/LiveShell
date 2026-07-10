@@ -6,7 +6,7 @@
 
 LiveShell is a generic local execution substrate for Python. It provides persistent shell sessions, synchronous and asynchronous APIs, durable command records, replayable command events, and a small JSON-lines daemon protocol for process-managed integrations.
 
-It is intentionally reusable infrastructure. LiveShell owns local sessions, commands, output events, cancellation, and backend capability discovery. It does not include agent, plan, scheduler, work-packet, evidence, policy, URL-handler, or remote-network-server concepts. Its optional daemon transport is a loopback-only TCP socket (see [Durable Daemon Client](#durable-daemon-client)); there is no remote listener.
+It is intentionally reusable infrastructure. LiveShell owns local sessions, commands, output events, cancellation, and backend capability discovery. It does not include agent, plan, scheduler, work-packet, evidence, policy, URL-handler, or remote-network-server concepts. Its optional daemon transport is a loopback-only TCP socket (see [Transports](docs/PROTOCOL.md#transports)); there is no remote listener.
 
 ## What It Provides
 
