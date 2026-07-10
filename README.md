@@ -134,7 +134,7 @@ Async code can use methods such as `discover_capabilities_async`, `create_sessio
 
 ## Daemon Protocol
 
-The daemon speaks JSON lines over stdio:
+The daemon speaks JSON-line protocol frames over stdio or the loopback TCP socket transport:
 
 - Each request is one JSON object followed by a newline.
 - Each response is one JSON object followed by a newline.
@@ -160,7 +160,7 @@ Start a long-running daemon on stdio:
 liveshell daemon stdio --state-dir .\.liveshell-state
 ```
 
-Process exactly one request and exit, which is useful for deterministic tests:
+For stdio, process exactly one request and exit, which is useful for deterministic tests:
 
 ```powershell
 liveshell daemon stdio --once --state-dir .\.liveshell-state
