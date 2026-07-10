@@ -57,6 +57,21 @@ class CapabilityTests(unittest.TestCase):
         # There is still no remote/auto-started network server.
         self.assertFalse(details["remote_network"])
 
+    def test_exit_code_capability_distinguishes_native_from_sentinel(self) -> None:
+        payload = [capability.to_dict() for capability in discover_capabilities()]
+        names = {item["name"] for item in payload}
+        # The misleading unconditional `command.exit_code.native` is gone; the
+        # capability now states the mechanism per backend.
+        self.assertNotIn("command.exit_code.native", names)
+        exit_code = next(item for item in payload if item["name"] == "command.exit_code")
+        self.assertTrue(exit_code["available"])
+        details = exit_code["details"]
+        # cmd/bash scrape the exit status from a stdout sentinel; only hosted
+        # PowerShell reads it natively in-process.
+        self.assertEqual(details["cmd"], "sentinel_parsed")
+        self.assertEqual(details["bash"], "sentinel_parsed")
+        self.assertEqual(details["hosted_powershell"], "native")
+
 
 if __name__ == "__main__":
     unittest.main()

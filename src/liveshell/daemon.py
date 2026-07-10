@@ -632,6 +632,22 @@ class LiveShellService:
             if self._is_terminal(command_id):
                 return
 
+            # Handle the case where cancel_command killed the process before the
+            # while loop above detected cancel_event.  The exec_thread may finish
+            # (process killed → non-zero exit) and exit the loop via
+            # exec_thread.is_alive() becoming False before cancel_event.is_set()
+            # is checked.  Without this guard the worker would call _finish_failed
+            # and win the race against _finish_canceled in cancel_command.
+            if cancel_event.is_set():
+                self._finish_canceled_if_active(
+                    command_id,
+                    reason="cancel_requested",
+                    session=session,
+                    termination_strategy="process_killed",
+                    close_session=True,
+                )
+                return
+
             error = result_holder.get("error")
             if error is not None:
                 error_text = str(error)

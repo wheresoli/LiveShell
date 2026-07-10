@@ -317,7 +317,7 @@ Discovery reports backend and protocol capabilities such as:
 - `command.stdout.streaming`
 - `command.stderr.separate`
 - `command.events.streaming.best_effort`
-- `command.exit_code.native`
+- `command.exit_code`
 - `command.cancel.best_effort`
 - `shell.cmd.available`
 - `shell.bash.available`
