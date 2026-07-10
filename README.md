@@ -272,7 +272,7 @@ liveshell command cancel --command-id cmd_... --state-dir .\.liveshell-state
 
 Long-lived live sessions, command start, and active command cancellation require the daemon process that owns the in-memory shell session. Direct `session create`, `command start`, and active `command cancel` CLI paths fail clearly outside that daemon instead of faking success against only the SQLite store. Use `LiveShellClient` or send protocol requests to a running stdio or socket daemon for live session control. `liveshell daemon start` launches a detached, persistent socket daemon (loopback TCP) that survives the launching process; attach to it from a fresh client with `LiveShellClient.connect(state_dir)` and stop it with `liveshell daemon stop`.
 
-`daemon.status` reads local state-dir daemon metadata. `daemon.shutdown` writes a local shutdown marker; live daemons also support the reliable `daemon.shutdown` protocol method over their channel (stdin for stdio, the socket for a socket daemon). An auto-started network server, OS URL protocol handler, and hidden command execution from links are intentionally not provided; the socket daemon is opt-in and binds to loopback (`127.0.0.1`) only.
+`daemon.status` reads local state-dir daemon metadata. `daemon.shutdown` writes a local shutdown marker; live daemons also support the reliable `daemon.shutdown` protocol method over their channel (stdin for stdio, the socket for a socket daemon). An auto-started network server, OS URL protocol handler, and hidden command execution from links are intentionally not provided; the socket daemon is opt-in and binds to a loopback IPv4 address only (default `127.0.0.1`).
 
 ## Capability Discovery
 
