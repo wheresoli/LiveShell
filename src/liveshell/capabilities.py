@@ -23,7 +23,15 @@ def discover_capabilities() -> list[Capability]:
         Capability("command.poll", True),
         Capability("command.timeout", True),
         Capability("command.exit_code.native", True),
-        Capability("daemon.protocol", True, {"transport": "stdio", "network": False}),
+        Capability(
+            "daemon.protocol",
+            True,
+            {
+                "transports": ["stdio", "socket"],
+                "socket_scope": "loopback",
+                "remote_network": False,
+            },
+        ),
         Capability("command.events.replay", True),
         Capability("command.events.chunking", True),
         Capability("command.stdout.streaming", True, {"scope": "process_backed"}),

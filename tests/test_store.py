@@ -17,7 +17,7 @@ from liveshell.store import BUSY_TIMEOUT_MS, TAIL_LIMIT, Store  # noqa: E402
 
 class StoreTests(unittest.TestCase):
     def test_store_uses_wal_and_busy_timeout(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
 
             with store._connect() as connection:
@@ -28,7 +28,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(busy_timeout, BUSY_TIMEOUT_MS)
 
     def test_create_list_update_sessions(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
 
             session = store.create_session(
@@ -44,7 +44,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual([item.id for item in sessions], [session.id])
 
     def test_command_events_are_ordered_and_replayable(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="running")
             command = store.create_command(
@@ -61,7 +61,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(store.command_result(command.id).stdout, "hello")
 
     def test_command_tail_fields_are_truncated(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="running")
             command = store.create_command(
@@ -75,7 +75,7 @@ class StoreTests(unittest.TestCase):
             self.assertEqual(updated.stderr_tail, output[-TAIL_LIMIT:])
 
     def test_session_and_command_filters(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             running = store.create_session(SessionSpec(kind="cmd"), status="running")
             closed = store.create_session(SessionSpec(kind="cmd"), status="closed")
@@ -102,7 +102,7 @@ class StoreTests(unittest.TestCase):
             )
 
     def test_missing_records_and_invalid_updates_are_explicit(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
 
             self.assertIsNone(store.command_result("cmd_missing"))
@@ -124,7 +124,7 @@ class StoreTests(unittest.TestCase):
                 store.update_command(command.id, unsupported=True)
 
     def test_metadata_round_trips_on_sessions_commands_and_events(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(
                 SessionSpec(kind="cmd", metadata={"owner": "models"}),

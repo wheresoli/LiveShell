@@ -6,7 +6,7 @@
 
 LiveShell is a generic local execution substrate for Python. It provides persistent shell sessions, synchronous and asynchronous APIs, durable command records, replayable command events, and a small JSON-lines daemon protocol for process-managed integrations.
 
-It is intentionally reusable infrastructure. LiveShell owns local sessions, commands, output events, cancellation, and backend capability discovery. It does not include agent, plan, scheduler, work-packet, evidence, policy, URL-handler, or network-server concepts.
+It is intentionally reusable infrastructure. LiveShell owns local sessions, commands, output events, cancellation, and backend capability discovery. It does not include agent, plan, scheduler, work-packet, evidence, policy, URL-handler, or remote-network-server concepts. Its optional daemon transport is a loopback-only TCP socket (see [Durable Daemon Client](#durable-daemon-client)); there is no remote listener.
 
 ## What It Provides
 
@@ -255,6 +255,9 @@ liveshell --json-pretty capability discover
 liveshell run --kind cmd --command "echo hello" --timeout-seconds 5
 liveshell daemon stdio
 liveshell daemon stdio --once
+liveshell daemon start --state-dir .\.liveshell-state
+liveshell daemon serve --host 127.0.0.1 --port 0 --state-dir .\.liveshell-state
+liveshell daemon stop --state-dir .\.liveshell-state
 liveshell daemon status
 liveshell daemon shutdown --reason maintenance
 liveshell session list --state-dir .\.liveshell-state
@@ -267,9 +270,9 @@ liveshell command cancel --command-id cmd_... --state-dir .\.liveshell-state
 
 `liveshell run` is a one-shot convenience command. It starts a local stdio daemon, creates a session, runs one command, waits for the durable result envelope, closes the session, and exits.
 
-Long-lived live sessions, command start, and active command cancellation require the daemon process that owns the in-memory shell session. Direct `session create`, `command start`, and active `command cancel` CLI paths fail clearly outside that daemon instead of faking success against only the SQLite store. Use `LiveShellClient` or send protocol requests to a running stdio daemon for live session control.
+Long-lived live sessions, command start, and active command cancellation require the daemon process that owns the in-memory shell session. Direct `session create`, `command start`, and active `command cancel` CLI paths fail clearly outside that daemon instead of faking success against only the SQLite store. Use `LiveShellClient` or send protocol requests to a running stdio or socket daemon for live session control. `liveshell daemon start` launches a detached, persistent socket daemon (loopback TCP) that survives the launching process; attach to it from a fresh client with `LiveShellClient.connect(state_dir)` and stop it with `liveshell daemon stop`.
 
-`daemon.status` reads local state-dir daemon metadata. `daemon.shutdown` writes a local shutdown marker; stdio daemons also support the reliable `daemon.shutdown` protocol method over their stdin. A default network server, OS URL protocol handler, and hidden command execution from links are intentionally not provided.
+`daemon.status` reads local state-dir daemon metadata. `daemon.shutdown` writes a local shutdown marker; live daemons also support the reliable `daemon.shutdown` protocol method over their channel (stdin for stdio, the socket for a socket daemon). An auto-started network server, OS URL protocol handler, and hidden command execution from links are intentionally not provided; the socket daemon is opt-in and binds to loopback (`127.0.0.1`) only.
 
 ## Capability Discovery
 
@@ -354,9 +357,9 @@ Command output is durable and replayable, but it may contain secrets. LiveShell 
 
 Persistent sessions own their working directory. Set `cwd` on `session.create`; per-command `cwd` is accepted only when it matches the session cwd. Create a separate session for a different working directory.
 
-OS URL protocol handlers, deep links, network servers, and hidden command execution from URLs are intentionally not implemented.
+OS URL protocol handlers, deep links, remote or auto-started network servers, and hidden command execution from URLs are intentionally not implemented.
 
-Local named pipe or Unix socket daemon transport is not included in this slice. The stdio protocol is the supported live transport; status/shutdown CLI commands operate through state-dir metadata unless a caller sends the protocol method over an existing daemon stdio channel.
+Two live transports are supported: **stdio** (the default; its lifetime is bound to the launching process's pipes) and a **loopback TCP socket** (`liveshell daemon serve`/`daemon start`, attached from a fresh client via `LiveShellClient.connect(state_dir)`) that keeps running after clients disconnect. Named-pipe and Unix-domain-socket transports are not used — the socket transport is loopback TCP. `status`/`shutdown` CLI commands operate through state-dir metadata unless a caller sends the protocol method over a live daemon channel.
 
 ## Tests
 

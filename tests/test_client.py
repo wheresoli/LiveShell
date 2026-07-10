@@ -26,7 +26,7 @@ def available_process_shell() -> tuple[str, str] | None:
 
 class LiveShellClientTests(unittest.TestCase):
     def test_stdio_client_discovers_capabilities(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with LiveShellClient.stdio(temp_dir) as client:
                 capabilities = client.discover_capabilities()
 
@@ -38,7 +38,7 @@ class LiveShellClientTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with LiveShellClient.stdio(temp_dir) as client:
                 session = client.create_session(kind)
                 result = session.run(command, timeout_seconds=5, poll_interval=0.05)
@@ -49,7 +49,7 @@ class LiveShellClientTests(unittest.TestCase):
             self.assertEqual(closed.status, "closed")
 
     def test_stdio_client_raises_response_error_for_daemon_errors(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             with LiveShellClient.stdio(temp_dir) as client:
                 with self.assertRaises(LiveShellResponseError) as context:
                     client.session_snapshot("sess_missing")
@@ -60,7 +60,7 @@ class LiveShellClientTests(unittest.TestCase):
 class AsyncLiveShellClientTests(unittest.IsolatedAsyncioTestCase):
     async def test_async_client_methods_wrap_sync_protocol_operations(self) -> None:
         asyncio.get_running_loop().slow_callback_duration = 2.0
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             client = LiveShellClient.stdio(temp_dir)
             try:
                 capabilities = await client.discover_capabilities_async()

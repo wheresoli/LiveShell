@@ -45,7 +45,7 @@ class CliTests(unittest.TestCase):
         self.assertIn("command.poll", capability_names)
 
     def test_daemon_stdio_once_prints_protocol_response(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             output = io.StringIO()
             request = json.dumps(
                 {"id": "req_1", "method": "capability.discover", "params": {}}
@@ -64,7 +64,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("capabilities", response["result"])
 
     def test_session_list_and_snapshot_succeed_as_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(
                 SessionSpec(kind="cmd", cwd=temp_dir, metadata={"purpose": "cli-test"}),
@@ -97,7 +97,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(snapshot_payload["result"]["metadata"]["purpose"], "cli-test")
 
     def test_command_read_commands_succeed_as_json_for_terminal_records(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="closed")
             command = store.create_command(
@@ -175,7 +175,7 @@ class CliTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 status = main(
@@ -203,7 +203,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["result"]["closed_session"]["status"], "closed")
 
     def test_session_create_without_live_daemon_fails_as_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 status = main(
@@ -223,7 +223,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["error"]["type"], "RuntimeError")
 
     def test_command_start_without_live_daemon_fails_as_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 status = main(
@@ -245,7 +245,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(payload["error"]["type"], "RuntimeError")
 
     def test_command_cancel_without_live_daemon_fails_as_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="running")
             command = store.create_command(
@@ -273,7 +273,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(store.get_command(command.id).status, "running")
 
     def test_command_events_for_unknown_command_fails_as_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 status = main(
@@ -297,7 +297,7 @@ class CliTests(unittest.TestCase):
             def poll(self) -> int:
                 return 23
 
-        with tempfile.TemporaryDirectory(prefix="liveshell-cli-daemon-") as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True, prefix="liveshell-cli-daemon-") as temp_dir:
             args = mock.Mock()
             args.state_dir = temp_dir
             args.host = "127.0.0.1"
