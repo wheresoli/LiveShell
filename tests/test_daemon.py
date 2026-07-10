@@ -75,7 +75,7 @@ def stderr_process_shell() -> tuple[str, str] | None:
 
 class DaemonTests(unittest.TestCase):
     def test_protocol_handler_returns_capabilities_response(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             response = daemon.handle_request(
@@ -89,7 +89,7 @@ class DaemonTests(unittest.TestCase):
             self.assertIn("capabilities", response["result"])
 
     def test_protocol_validation_returns_value_error(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             missing_method = daemon.handle_request({"id": "req_missing", "params": {}})
@@ -103,7 +103,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(bad_params["error"]["type"], "ValueError")
 
     def test_protocol_accepts_null_params_and_missing_id(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             response = daemon.handle_request(
@@ -115,7 +115,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(response["result"], [])
 
     def test_protocol_reports_unknown_methods_and_ids(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             unknown_method = daemon.handle_request(
@@ -144,7 +144,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(unknown_command["error"]["type"], "KeyError")
 
     def test_stdio_loop_reports_malformed_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
             output_stream = io.StringIO()
 
@@ -160,7 +160,7 @@ class DaemonTests(unittest.TestCase):
             self.assertEqual(response["error"]["type"], "JSONDecodeError")
 
     def test_stdio_loop_handles_multiple_requests(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
             input_stream = io.StringIO(
                 "\n".join(
@@ -203,7 +203,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command, _, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             try:
@@ -225,7 +225,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, set_command, read_command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             try:
@@ -254,7 +254,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             try:
@@ -296,7 +296,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             try:
@@ -330,7 +330,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command, _, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             try:
@@ -353,7 +353,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command, _, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             create_response = daemon.handle_request(
@@ -440,7 +440,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command, _, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
             create_response = daemon.handle_request(
                 {
@@ -473,7 +473,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command, _, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
             create_response = daemon.handle_request(
                 {
@@ -507,7 +507,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command, _, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind, cwd=temp_dir)
             try:
@@ -541,7 +541,7 @@ class DaemonTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: FakeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 service = LiveShellService(Store.from_state_dir(temp_dir))
                 session = service.create_session("powershell", cwd=temp_dir)
 
@@ -573,7 +573,7 @@ class DaemonTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: FakeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 service = LiveShellService(Store.from_state_dir(temp_dir))
                 session = service.create_session("powershell")
                 try:
@@ -614,7 +614,7 @@ class DaemonTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: FakeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 service = LiveShellService(Store.from_state_dir(temp_dir))
                 session = service.create_session("powershell")
                 try:
@@ -661,7 +661,7 @@ class DaemonTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: FakeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 service = LiveShellService(Store.from_state_dir(temp_dir))
                 session = service.create_session("powershell")
                 try:
@@ -689,7 +689,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, _, long_command, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
 
@@ -707,7 +707,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, _, long_command, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
 
@@ -723,7 +723,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, _, long_command, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             handle = service.start_command(session.id, long_command, timeout_seconds=30)
@@ -744,7 +744,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, _, long_command, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             handle = service.start_command(session.id, long_command, timeout_seconds=30)
@@ -761,7 +761,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, _, long_command, _ = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
 
@@ -777,7 +777,7 @@ class DaemonTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, _, _, failing_command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             try:
@@ -791,7 +791,7 @@ class DaemonTests(unittest.TestCase):
                 service.close_session(session.id)
 
     def test_recovery_marks_running_records_honestly(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="running")
             command = store.create_command(

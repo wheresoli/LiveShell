@@ -62,7 +62,7 @@ def async_stderr_shell() -> tuple[type, str] | None:
 
 class StoreProductionTests(unittest.TestCase):
     def test_schema_version_metadata_and_active_command_helpers(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(
                 SessionSpec(kind="cmd", metadata={"owner": "owner-1"}),
@@ -88,7 +88,7 @@ class StoreProductionTests(unittest.TestCase):
             self.assertTrue(store.session_owned_by(session.id, "owner-1"))
 
     def test_batched_events_preserve_order_and_replay_from_arbitrary_seq(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="running")
             command = store.create_command(
@@ -112,7 +112,7 @@ class StoreProductionTests(unittest.TestCase):
 
 class ProtocolProductionTests(unittest.TestCase):
     def test_capability_discovery_includes_protocol_version_and_error_codes(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             capabilities = daemon.handle_request(
@@ -132,7 +132,7 @@ class ProtocolProductionTests(unittest.TestCase):
             self.assertEqual(Store.from_state_dir(temp_dir).list_sessions(), [])
 
     def test_daemon_status_and_shutdown_protocol_methods(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             daemon = JsonLineDaemon(LiveShellService(Store.from_state_dir(temp_dir)))
 
             status = daemon.handle_request(
@@ -173,7 +173,7 @@ class ProtocolProductionTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: FakeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 store = Store.from_state_dir(temp_dir)
                 daemon = JsonLineDaemon(LiveShellService(store))
                 create = daemon.handle_request(
@@ -212,7 +212,7 @@ class ProtocolProductionTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: FakeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 store = Store.from_state_dir(temp_dir)
                 service = LiveShellService(store)
                 session = service.create_session("powershell")
@@ -229,7 +229,7 @@ class ProtocolProductionTests(unittest.TestCase):
             LiveShellService._session_type = staticmethod(original_session_type)
 
     def test_service_start_clears_stale_shutdown_marker(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             request_daemon_shutdown_marker(temp_dir, reason="old marker")
 
             service = LiveShellService(Store.from_state_dir(temp_dir))
@@ -267,7 +267,7 @@ class DaemonProductionTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: SlowHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 service = LiveShellService(Store.from_state_dir(temp_dir))
                 session = service.create_session("powershell")
                 try:
@@ -310,7 +310,7 @@ class DaemonProductionTests(unittest.TestCase):
         original_session_type = LiveShellService._session_type
         LiveShellService._session_type = staticmethod(lambda kind: LargeHostedSession)
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 service = LiveShellService(
                     Store.from_state_dir(temp_dir),
                     event_chunk_size=10,
@@ -340,7 +340,7 @@ class DaemonProductionTests(unittest.TestCase):
             self.skipTest("No process-backed shell is available")
         kind, command = shell
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             service = LiveShellService(Store.from_state_dir(temp_dir))
             session = service.create_session(kind)
             result = service.start_command(
@@ -363,7 +363,7 @@ class ClientProductionTests(unittest.TestCase):
         else:
             self.skipTest("No process-backed shell is available")
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             client = LiveShellClient.stdio(temp_dir)
             session = client.create_session(kind)
 
@@ -408,7 +408,7 @@ class ClientProductionTests(unittest.TestCase):
 
 class CliProductionTests(unittest.TestCase):
     def test_daemon_status_shutdown_and_pretty_json(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             status_output = io.StringIO()
             with contextlib.redirect_stdout(status_output):
                 status_code = main(

@@ -18,14 +18,14 @@ from liveshell.store import Store  # noqa: E402
 
 class CommandHandleTests(unittest.TestCase):
     def test_events_for_unknown_command_raises_key_error(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             handle = CommandHandle("cmd_missing", Store.from_state_dir(temp_dir))
 
             with self.assertRaises(KeyError):
                 handle.events()
 
     def test_sync_handle_returns_terminal_result_and_cancel_snapshot(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="closed")
             command = store.create_command(
@@ -64,7 +64,7 @@ class SessionHandleTests(unittest.TestCase):
                 )
                 return CommandHandle(created.id, store)
 
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="running")
             service = FakeService()
@@ -81,7 +81,7 @@ class SessionHandleTests(unittest.TestCase):
 
 class AsyncCommandHandleTests(unittest.IsolatedAsyncioTestCase):
     async def test_async_methods_wrap_sync_handle_operations(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
             store = Store.from_state_dir(temp_dir)
             session = store.create_session(SessionSpec(kind="cmd"), status="closed")
             command = store.create_command(

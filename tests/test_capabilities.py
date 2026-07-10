@@ -43,6 +43,20 @@ class CapabilityTests(unittest.TestCase):
         self.assertTrue(streaming["details"]["hosted_powershell_native_exit_code"])
         self.assertIsInstance(encoded, str)
 
+    def test_daemon_protocol_advertises_both_transports(self) -> None:
+        payload = [capability.to_dict() for capability in discover_capabilities()]
+        daemon_protocol = next(
+            item for item in payload if item["name"] == "daemon.protocol"
+        )
+        details = daemon_protocol["details"]
+        # The package ships both a stdio and a loopback-socket transport
+        # (serve_socket / daemon serve / LiveShellClient.connect), so discovery
+        # must advertise both rather than claiming stdio-only.
+        self.assertEqual(details["transports"], ["stdio", "socket"])
+        self.assertEqual(details["socket_scope"], "loopback")
+        # There is still no remote/auto-started network server.
+        self.assertFalse(details["remote_network"])
+
 
 if __name__ == "__main__":
     unittest.main()
