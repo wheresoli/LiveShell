@@ -154,7 +154,7 @@ Example response:
 {"id":"req_1","ok":true,"result":{"protocol_version":"1.0","capabilities":[]}}
 ```
 
-Start a long-running daemon on stdio:
+Start a long-running daemon on stdio (lifetime is bound to the launching process's pipes):
 
 ```powershell
 liveshell daemon stdio --state-dir .\.liveshell-state
@@ -164,6 +164,19 @@ For stdio, process exactly one request and exit, which is useful for determinist
 
 ```powershell
 liveshell daemon stdio --once --state-dir .\.liveshell-state
+```
+
+Start a long-running daemon on the loopback TCP socket transport (keeps running after clients disconnect):
+
+```powershell
+liveshell daemon serve --state-dir .\.liveshell-state
+```
+
+Attach from a fresh client after the socket daemon is running:
+
+```python
+with LiveShellClient.connect(".liveshell-state") as client:
+    ...
 ```
 
 Supported protocol methods:
