@@ -22,7 +22,19 @@ def discover_capabilities() -> list[Capability]:
         Capability("command.async", True),
         Capability("command.poll", True),
         Capability("command.timeout", True),
-        Capability("command.exit_code.native", True),
+        Capability(
+            "command.exit_code",
+            True,
+            {
+                # cmd/bash surface the shell's real exit status ($?/%ERRORLEVEL%),
+                # but it is scraped from a stdout sentinel, not an OS-native process
+                # exit. Only hosted PowerShell reads it natively in-process
+                # ($LASTEXITCODE + HadErrors via the .NET runspace).
+                "cmd": "sentinel_parsed",
+                "bash": "sentinel_parsed",
+                "powershell_hosted": "native",
+            },
+        ),
         Capability(
             "daemon.protocol",
             True,
