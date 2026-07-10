@@ -70,7 +70,7 @@ class CapabilityTests(unittest.TestCase):
         # PowerShell reads it natively in-process.
         self.assertEqual(details["cmd"], "sentinel_parsed")
         self.assertEqual(details["bash"], "sentinel_parsed")
-        self.assertEqual(details["powershell_hosted"], "native")
+        self.assertEqual(details["hosted_powershell"], "native")
 
 
 if __name__ == "__main__":
